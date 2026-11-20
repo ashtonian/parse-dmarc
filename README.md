@@ -131,45 +131,55 @@ The image runs as UID and GID 65532 and writes nothing outside `/data`, so it ru
 
 Every setting in this table is an environment variable or a key in `config.json`. Environment is read first and the file overrides it. The command-line flags further down take an environment variable but no `config.json` key.
 
-| Setting                                   | Environment variable                 | Default                                                      |
-| ----------------------------------------- | ------------------------------------ | ------------------------------------------------------------ |
-| IMAP host and port                        | `IMAP_HOST`, `IMAP_PORT`             | required, `993`                                              |
-| IMAP username and password                | `IMAP_USERNAME`, `IMAP_PASSWORD`     | required                                                     |
-| Mailbox to read                           | `IMAP_MAILBOX`                       | `INBOX`                                                      |
-| Implicit TLS                              | `IMAP_USE_TLS`                       | `true`                                                       |
-| STARTTLS on a plaintext port              | `IMAP_STARTTLS`                      | `false`                                                      |
-| Internal CA bundle, PEM                   | `IMAP_TLS_CA_FILE`                   | unset                                                        |
-| Skip certificate verification             | `IMAP_TLS_SKIP_VERIFY`               | `false`                                                      |
-| Mark fetched mail as seen                 | `IMAP_MARK_AS_SEEN`                  | `true`                                                       |
-| Move processed mail to                    | `IMAP_PROCESSED_MAILBOX`             | unset                                                        |
-| Never flag or move mail                   | `IMAP_READ_ONLY`                     | `false`                                                      |
-| IMAP connect and command timeout, seconds | `IMAP_TIMEOUT_SECONDS`               | `60`                                                         |
-| JMAP intake instead of IMAP               | `JMAP_SESSION_URL`, `JMAP_TOKEN`     | unset                                                        |
-| JMAP folder to read                       | `JMAP_MAILBOX`                       | `INBOX`                                                      |
-| Refuse a JMAP token that can write        | `JMAP_REQUIRE_READ_ONLY`             | `true`                                                       |
-| JMAP request timeout, seconds             | `JMAP_TIMEOUT_SECONDS`               | `60`                                                         |
-| Maildir intake instead of IMAP            | `MAILDIR_PATH`                       | unset                                                        |
-| Maildir deadletter mailbox                | `IMAP_DEADLETTER_BOX`                | `DEADLETTER`                                                 |
-| Database file                             | `DATABASE_PATH`                      | `~/.parse-dmarc/db.sqlite`, `/data/parse-dmarc.db` in Docker |
-| PostgreSQL instead of SQLite              | `DATABASE_URL`                       | unset                                                        |
-| PostgreSQL pool size                      | `DATABASE_MAX_OPEN_CONNS`            | `4`                                                          |
-| PostgreSQL connection lifetime            | `DATABASE_CONN_MAX_LIFETIME_SECONDS` | `1800`                                                       |
-| PostgreSQL idle connection                | `DATABASE_CONN_MAX_IDLE_SECONDS`     | `300`                                                        |
-| HTTP listen                               | `SERVER_HOST`, `SERVER_PORT`         | `127.0.0.1`, `8080`, `0.0.0.0` in Docker                     |
-| Origins that may call the API             | `CORS_ALLOWED_ORIGINS`               | unset: no CORS headers                                       |
-| Seconds between fetches                   | `FETCH_INTERVAL`                     | `300`                                                        |
-| Seconds one fetch may take                | `FETCH_TIMEOUT_SECONDS`              | `600`                                                        |
-| Seconds to drain on shutdown              | `SHUTDOWN_TIMEOUT_SECONDS`           | `10`                                                         |
-| Reverse DNS of sending IPs                | `ENRICH_REVERSE_DNS`                 | `true`                                                       |
-| DNS server for those lookups              | `ENRICH_DNS_SERVER`                  | system resolver                                              |
-| DNS lookup timeout, seconds               | `ENRICH_DNS_TIMEOUT_SECONDS`         | `2`                                                          |
-| Sender map, CSV                           | `ENRICH_SERVICE_MAP`                 | unset                                                        |
-| IP databases, MMDB, comma-separated       | `ENRICH_IP_DATABASES`                | unset                                                        |
-| Days before a sender is looked up again   | `ENRICH_REFRESH_DAYS`                | `30`                                                         |
-| Log level                                 | `LOG_LEVEL`                          | `info`                                                       |
-| Log format: `console` or `json`           | `LOG_FORMAT`                         | `console`                                                    |
+| Setting                                         | Environment variable                                           | Default                                                      |
+| ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------ |
+| IMAP host and port                              | `IMAP_HOST`, `IMAP_PORT`                                       | required, `993`                                              |
+| IMAP username and password                      | `IMAP_USERNAME`, `IMAP_PASSWORD`                               | required                                                     |
+| Mailbox to read                                 | `IMAP_MAILBOX`                                                 | `INBOX`                                                      |
+| Implicit TLS                                    | `IMAP_USE_TLS`                                                 | `true`                                                       |
+| STARTTLS on a plaintext port                    | `IMAP_STARTTLS`                                                | `false`                                                      |
+| Internal CA bundle, PEM                         | `IMAP_TLS_CA_FILE`                                             | unset                                                        |
+| Skip certificate verification                   | `IMAP_TLS_SKIP_VERIFY`                                         | `false`                                                      |
+| Mark fetched mail as seen                       | `IMAP_MARK_AS_SEEN`                                            | `true`                                                       |
+| Move processed mail to                          | `IMAP_PROCESSED_MAILBOX`                                       | unset                                                        |
+| Never flag or move mail                         | `IMAP_READ_ONLY`                                               | `false`                                                      |
+| IMAP connect and command timeout, seconds       | `IMAP_TIMEOUT_SECONDS`                                         | `60`                                                         |
+| JMAP intake instead of IMAP                     | `JMAP_SESSION_URL`, `JMAP_TOKEN`                               | unset                                                        |
+| JMAP folder to read                             | `JMAP_MAILBOX`                                                 | `INBOX`                                                      |
+| Refuse a JMAP token that can write              | `JMAP_REQUIRE_READ_ONLY`                                       | `true`                                                       |
+| JMAP request timeout, seconds                   | `JMAP_TIMEOUT_SECONDS`                                         | `60`                                                         |
+| Maildir intake instead of IMAP                  | `MAILDIR_PATH`                                                 | unset                                                        |
+| Maildir deadletter mailbox                      | `IMAP_DEADLETTER_BOX`                                          | `DEADLETTER`                                                 |
+| Database file                                   | `DATABASE_PATH`                                                | `~/.parse-dmarc/db.sqlite`, `/data/parse-dmarc.db` in Docker |
+| PostgreSQL instead of SQLite                    | `DATABASE_URL`                                                 | unset                                                        |
+| PostgreSQL pool size                            | `DATABASE_MAX_OPEN_CONNS`                                      | `4`                                                          |
+| PostgreSQL connection lifetime                  | `DATABASE_CONN_MAX_LIFETIME_SECONDS`                           | `1800`                                                       |
+| PostgreSQL idle connection                      | `DATABASE_CONN_MAX_IDLE_SECONDS`                               | `300`                                                        |
+| HTTP listen                                     | `SERVER_HOST`, `SERVER_PORT`                                   | `127.0.0.1`, `8080`, `0.0.0.0` in Docker                     |
+| Origins that may call the API                   | `CORS_ALLOWED_ORIGINS`                                         | unset: no CORS headers                                       |
+| Seconds between fetches                         | `FETCH_INTERVAL`                                               | `300`                                                        |
+| Seconds one fetch may take                      | `FETCH_TIMEOUT_SECONDS`                                        | `600`                                                        |
+| Seconds to drain on shutdown                    | `SHUTDOWN_TIMEOUT_SECONDS`                                     | `10`                                                         |
+| S3 archive bucket                               | `S3_BUCKET`                                                    | unset: no archive                                            |
+| S3 endpoint                                     | `S3_ENDPOINT`                                                  | AWS                                                          |
+| S3 region                                       | `S3_REGION`                                                    | `us-east-1`                                                  |
+| S3 credentials                                  | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_SESSION_TOKEN` | environment or instance role                                 |
+| S3 key prefix                                   | `S3_PREFIX`                                                    | unset                                                        |
+| S3 bucket addressing: `auto`, `path`, `virtual` | `S3_PATH_STYLE`                                                | `auto`                                                       |
+| S3 CA bundle, PEM                               | `S3_CA_FILE`                                                   | system roots                                                 |
+| S3 request timeout, seconds                     | `S3_TIMEOUT_SECONDS`                                           | `30`                                                         |
+| Reverse DNS of sending IPs                      | `ENRICH_REVERSE_DNS`                                           | `true`                                                       |
+| DNS server for those lookups                    | `ENRICH_DNS_SERVER`                                            | system resolver                                              |
+| DNS lookup timeout, seconds                     | `ENRICH_DNS_TIMEOUT_SECONDS`                                   | `2`                                                          |
+| Sender map, CSV                                 | `ENRICH_SERVICE_MAP`                                           | unset                                                        |
+| IP databases, MMDB, comma-separated             | `ENRICH_IP_DATABASES`                                          | unset                                                        |
+| Days before a sender is looked up again         | `ENRICH_REFRESH_DAYS`                                          | `30`                                                         |
+| Log level                                       | `LOG_LEVEL`                                                    | `info`                                                       |
+| Log format: `console` or `json`                 | `LOG_FORMAT`                                                   | `console`                                                    |
 
 On `SIGTERM` or `SIGINT` the fetch in progress is cancelled (mail it had not finished with is read again on the next start), the HTTP server stops accepting connections and gives in-flight requests `SHUTDOWN_TIMEOUT_SECONDS` to finish, and only then is the database closed. A fetch that runs longer than `FETCH_TIMEOUT_SECONDS` is cancelled the same way and resumes on the next cycle.
+
+With `S3_BUCKET` set, every report is written to that bucket before it is stored: the attachment exactly as received under `<prefix>raw/<dmarc|tlsrpt>/year=YYYY/month=MM/day=DD/` and the parsed report as JSON under the same path below `<prefix>parsed/`, partitioned by the report's start date (UTC) so Athena, Trino or DuckDB can read it as a table. A report always maps to the same keys, so writing it again overwrites; a report the bucket refuses is not stored and its message is read again on the next fetch. Any S3-compatible store works: AWS S3, MinIO, SeaweedFS, Cloudflare R2. The bucket must exist; it is checked on start.
 
 Each sending address of a new report is looked up once and cached in the `sources` table, then again after `ENRICH_REFRESH_DAYS`; addresses stored before are filled in after each fetch, 200 at a time. Its reverse DNS name counts only when it resolves back to the address (forward-confirmed), because whoever controls an address controls its PTR record. A confirmed name, or failing that the address's AS domain, is looked up in `ENRICH_SERVICE_MAP`, a CSV with the columns `base_reverse_dns,name,type` (parsedmarc's [`base_reverse_dns_map.csv`](https://github.com/domainaware/parsedmarc/tree/master/parsedmarc/resources/maps) has this format), to name the service; `ENRICH_IP_DATABASES` adds country and autonomous system from MMDB files such as IPinfo Lite, MaxMind GeoLite2 or DB-IP Lite. Both are files you download under their own licenses. `ENRICH_REVERSE_DNS=false` with neither file set turns enrichment off.
 

@@ -6,10 +6,12 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
 
+	"github.com/dmarcguardhq/parse-dmarc/internal/archive"
 	"github.com/dmarcguardhq/parse-dmarc/internal/enrich"
 	"github.com/dmarcguardhq/parse-dmarc/internal/intake"
 	"github.com/dmarcguardhq/parse-dmarc/internal/metrics"
@@ -46,6 +48,15 @@ type Pipeline struct {
 	sources  SourceStore
 	refresh  time.Duration
 	now      func() time.Time
+
+	archive archive.Archiver
+}
+
+// WithArchive writes every report to a, as received and as parsed, before
+// it is stored. A report the archive refuses is not stored either, and its
+// message is retried, so the store never holds a report the archive lacks.
+func WithArchive(a archive.Archiver) Option {
+	return func(p *Pipeline) { p.archive = a }
 }
 
 // Option configures a Pipeline.
@@ -142,6 +153,20 @@ func (p *Pipeline) Handle(ctx context.Context, msg intake.Message) intake.Outcom
 		}
 		p.metrics.ReportParsed()
 
+		if p.archive != nil {
+			keys, err := p.archive.Put(ctx, archiveReport(att, report))
+			if err != nil {
+				p.log.Error().Err(err).
+					Str("kind", string(report.Kind)).
+					Str("message_id", msg.MessageID).
+					Msg("failed to archive report")
+				p.metrics.ReportArchiveFailed()
+				retry = true
+				continue
+			}
+			p.log.Debug().Str("raw", keys.Raw).Str("parsed", keys.Parsed).Msg("archived report")
+		}
+
 		saved, err := p.save(ctx, report)
 		event := p.log.Info().
 			Str("kind", string(report.Kind)).
@@ -185,6 +210,34 @@ func (p *Pipeline) save(ctx context.Context, r *parser.Report) (bool, error) {
 	default:
 		return p.store.SaveReport(ctx, r.DMARC)
 	}
+}
+
+// archiveReport is what the archive keeps of one report: the attachment as
+// received and the report as parsed, keyed by kind, reporter, report ID and
+// domain.
+func archiveReport(att intake.Attachment, r *parser.Report) archive.Report {
+	out := archive.Report{
+		Raw:            att.Data,
+		RawFilename:    att.Filename,
+		RawContentType: att.ContentType,
+	}
+	switch r.Kind {
+	case parser.KindTLSRPT:
+		out.Kind = archive.KindTLSRPT
+		out.OrgName = r.TLSRPT.OrganizationName
+		out.ReportID = r.TLSRPT.ReportID
+		out.Domain = strings.Join(r.TLSRPT.PolicyDomains(), ",")
+		out.Begin = r.TLSRPT.DateRange.Start
+		out.Parsed = r.TLSRPT
+	default:
+		out.Kind = archive.KindDMARC
+		out.OrgName = r.DMARC.ReportMetadata.OrgName
+		out.ReportID = r.DMARC.ReportMetadata.ReportID
+		out.Domain = r.DMARC.PolicyPublished.Domain
+		out.Begin = time.Unix(r.DMARC.ReportMetadata.DateRange.Begin, 0).UTC()
+		out.Parsed = r.DMARC
+	}
+	return out
 }
 
 func sourceIPs(f *parser.Feedback) []string {

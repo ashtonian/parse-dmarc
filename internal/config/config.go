@@ -40,6 +40,7 @@ type Config struct {
 	Maildir     MaildirConfig  `json:"maildir"`
 	Database    DatabaseConfig `json:"database"`
 	Enrich      EnrichConfig   `json:"enrich"`
+	Archive     ArchiveConfig  `json:"archive"`
 	Server      ServerConfig   `json:"server"`
 }
 
@@ -99,6 +100,24 @@ type MaildirConfig struct {
 	// message no report could be read from, so the operator sees what the
 	// parser dropped instead of it passing as processed.
 	DeadletterMailbox string `json:"deadletter_mailbox" env:"IMAP_DEADLETTER_BOX" envDefault:"DEADLETTER"`
+}
+
+// ArchiveConfig names an S3-compatible bucket (AWS S3, MinIO, SeaweedFS,
+// Cloudflare R2) that receives every report as received and as parsed
+// JSON. Setting Bucket turns the archive on. Without static keys the
+// credentials come from the environment or instance role.
+type ArchiveConfig struct {
+	Endpoint        string `json:"s3_endpoint" env:"S3_ENDPOINT"`
+	Bucket          string `json:"s3_bucket" env:"S3_BUCKET"`
+	Region          string `json:"s3_region" env:"S3_REGION" envDefault:"us-east-1"`
+	AccessKeyID     string `json:"s3_access_key_id" env:"S3_ACCESS_KEY_ID"`
+	SecretAccessKey string `json:"s3_secret_access_key" env:"S3_SECRET_ACCESS_KEY"`
+	SessionToken    string `json:"s3_session_token" env:"S3_SESSION_TOKEN"`
+	Prefix          string `json:"s3_prefix" env:"S3_PREFIX"`
+	// PathStyle is auto, path or virtual bucket addressing.
+	PathStyle      string `json:"s3_path_style" env:"S3_PATH_STYLE" envDefault:"auto"`
+	CAFile         string `json:"s3_ca_file" env:"S3_CA_FILE"`
+	TimeoutSeconds int    `json:"s3_timeout_seconds" env:"S3_TIMEOUT_SECONDS" envDefault:"30"`
 }
 
 // EnrichConfig controls how sending addresses are attributed to senders:

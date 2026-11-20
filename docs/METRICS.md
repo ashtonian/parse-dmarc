@@ -12,18 +12,19 @@ Parse DMARC exposes Prometheus metrics at `/metrics` (on by default, `--metrics=
 
 ### Report Processing
 
-| Metric                                             | Type      | Description                                 |
-| -------------------------------------------------- | --------- | ------------------------------------------- |
-| `parse_dmarc_reports_fetched_total`                | Counter   | Total DMARC report emails fetched from IMAP |
-| `parse_dmarc_reports_parsed_total`                 | Counter   | Total DMARC reports successfully parsed     |
-| `parse_dmarc_reports_stored_total`                 | Counter   | Total DMARC reports stored in database      |
-| `parse_dmarc_reports_parse_errors_total`           | Counter   | Total parse errors                          |
-| `parse_dmarc_reports_store_errors_total`           | Counter   | Total storage errors                        |
-| `parse_dmarc_reports_attachments_total`            | Counter   | Total attachments processed                 |
-| `parse_dmarc_reports_fetch_duration_seconds`       | Histogram | Duration of fetch operations                |
-| `parse_dmarc_reports_last_fetch_timestamp_seconds` | Gauge     | Unix timestamp of last successful fetch     |
-| `parse_dmarc_reports_fetch_cycles_total`           | Counter   | Total fetch cycles executed                 |
-| `parse_dmarc_reports_fetch_errors_total`           | Counter   | Total fetch cycle errors                    |
+| Metric                                             | Type      | Description                                                |
+| -------------------------------------------------- | --------- | ---------------------------------------------------------- |
+| `parse_dmarc_reports_fetched_total`                | Counter   | Total DMARC report emails fetched from IMAP                |
+| `parse_dmarc_reports_parsed_total`                 | Counter   | Total DMARC reports successfully parsed                    |
+| `parse_dmarc_reports_stored_total`                 | Counter   | Total DMARC reports stored in database                     |
+| `parse_dmarc_reports_parse_errors_total`           | Counter   | Total parse errors                                         |
+| `parse_dmarc_reports_store_errors_total`           | Counter   | Total storage errors                                       |
+| `parse_dmarc_reports_archive_errors_total`         | Counter   | Reports the S3 archive refused; their messages are retried |
+| `parse_dmarc_reports_attachments_total`            | Counter   | Total attachments processed                                |
+| `parse_dmarc_reports_fetch_duration_seconds`       | Histogram | Duration of fetch operations                               |
+| `parse_dmarc_reports_last_fetch_timestamp_seconds` | Gauge     | Unix timestamp of last successful fetch                    |
+| `parse_dmarc_reports_fetch_cycles_total`           | Counter   | Total fetch cycles executed                                |
+| `parse_dmarc_reports_fetch_errors_total`           | Counter   | Total fetch cycle errors                                   |
 
 ### IMAP Connection
 

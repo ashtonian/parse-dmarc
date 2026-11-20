@@ -22,16 +22,17 @@ type Metrics struct {
 	BuildInfo *prometheus.GaugeVec
 
 	// Report processing metrics
-	ReportsFetched     prometheus.Counter
-	ReportsParsed      prometheus.Counter
-	ReportsStored      prometheus.Counter
-	ReportParseErrors  prometheus.Counter
-	ReportStoreErrors  prometheus.Counter
-	AttachmentsTotal   prometheus.Counter
-	FetchDuration      prometheus.Histogram
-	LastFetchTimestamp prometheus.Gauge
-	FetchCyclesTotal   prometheus.Counter
-	FetchErrors        prometheus.Counter
+	ReportsFetched      prometheus.Counter
+	ReportsParsed       prometheus.Counter
+	ReportsStored       prometheus.Counter
+	ReportParseErrors   prometheus.Counter
+	ReportStoreErrors   prometheus.Counter
+	ReportArchiveErrors prometheus.Counter
+	AttachmentsTotal    prometheus.Counter
+	FetchDuration       prometheus.Histogram
+	LastFetchTimestamp  prometheus.Gauge
+	FetchCyclesTotal    prometheus.Counter
+	FetchErrors         prometheus.Counter
 
 	// IMAP connection metrics
 	IMAPConnectionsTotal   *prometheus.CounterVec
@@ -116,6 +117,14 @@ func New(version, commit, buildDate string) *Metrics {
 				Subsystem: "reports",
 				Name:      "store_errors_total",
 				Help:      "Total number of DMARC report storage errors",
+			},
+		),
+		ReportArchiveErrors: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Subsystem: "reports",
+				Name:      "archive_errors_total",
+				Help:      "Total number of reports the S3 archive refused; their messages are retried",
 			},
 		),
 		AttachmentsTotal: prometheus.NewCounter(
@@ -333,6 +342,7 @@ func New(version, commit, buildDate string) *Metrics {
 		m.ReportsStored,
 		m.ReportParseErrors,
 		m.ReportStoreErrors,
+		m.ReportArchiveErrors,
 		m.AttachmentsTotal,
 		m.FetchDuration,
 		m.LastFetchTimestamp,
@@ -454,6 +464,14 @@ func (m *Metrics) ReportStoreFailed() {
 		return
 	}
 	m.ReportStoreErrors.Inc()
+}
+
+// ReportArchiveFailed counts a report the archive refused.
+func (m *Metrics) ReportArchiveFailed() {
+	if m == nil {
+		return
+	}
+	m.ReportArchiveErrors.Inc()
 }
 
 // RecordFetchDuration records the duration of a fetch operation

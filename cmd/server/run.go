@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dmarcguardhq/parse-dmarc/internal/api"
+	"github.com/dmarcguardhq/parse-dmarc/internal/archive"
 	"github.com/dmarcguardhq/parse-dmarc/internal/config"
 	"github.com/dmarcguardhq/parse-dmarc/internal/enrich"
 	"github.com/dmarcguardhq/parse-dmarc/internal/imap"
@@ -140,6 +141,25 @@ func run(ctx context.Context, version, commit, date string) error {
 			Bool("service_map", cfg.Enrich.ServiceMap != "").
 			Int("ip_databases", len(cfg.Enrich.IPDatabases)).
 			Msg("source enrichment enabled")
+	}
+	if cfg.Archive.Bucket != "" {
+		arch, err := archive.New(ctx, archive.Config{
+			Endpoint:        cfg.Archive.Endpoint,
+			Bucket:          cfg.Archive.Bucket,
+			Region:          cfg.Archive.Region,
+			AccessKeyID:     cfg.Archive.AccessKeyID,
+			SecretAccessKey: cfg.Archive.SecretAccessKey,
+			SessionToken:    cfg.Archive.SessionToken,
+			Prefix:          cfg.Archive.Prefix,
+			PathStyle:       archive.PathStyle(cfg.Archive.PathStyle),
+			CAFile:          cfg.Archive.CAFile,
+			Timeout:         time.Duration(cfg.Archive.TimeoutSeconds) * time.Second,
+		})
+		if err != nil {
+			return fmt.Errorf("configure S3 archive: %w", err)
+		}
+		pipelineOpts = append(pipelineOpts, ingest.WithArchive(arch))
+		log.Info().Str("bucket", cfg.Archive.Bucket).Str("prefix", cfg.Archive.Prefix).Msg("S3 archive enabled")
 	}
 	pipeline := ingest.New(store, m, log, pipelineOpts...)
 	fetchTimeout := time.Duration(cfg.FetchTimeoutSeconds) * time.Second

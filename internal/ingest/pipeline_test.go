@@ -8,6 +8,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/dmarcguardhq/parse-dmarc/internal/archive"
 	"github.com/dmarcguardhq/parse-dmarc/internal/enrich"
 	"github.com/dmarcguardhq/parse-dmarc/internal/intake"
 	"github.com/dmarcguardhq/parse-dmarc/internal/parser"
@@ -163,5 +164,50 @@ func TestHandleEnrichesNewReports(t *testing.T) {
 	p.EnrichBacklog(context.Background(), 10)
 	if _, ok := src.saved["203.0.113.5"]; !ok {
 		t.Fatal("backlog address not looked up")
+	}
+}
+
+type fakeArchive struct {
+	err  error
+	puts []archive.Report
+}
+
+func (a *fakeArchive) Put(_ context.Context, r archive.Report) (archive.Keys, error) {
+	if a.err != nil {
+		return archive.Keys{}, a.err
+	}
+	a.puts = append(a.puts, r)
+	return archive.Keys{Raw: "raw/x", Parsed: "parsed/x"}, nil
+}
+
+// Each report goes to the archive, as received and as parsed, before it is
+// stored; a report the archive refuses is not stored and its message is
+// retried.
+func TestHandleArchivesBeforeStoring(t *testing.T) {
+	log := zerolog.Nop()
+
+	a := &fakeArchive{}
+	store := &fakeStore{}
+	if got := New(store, nil, &log, WithArchive(a)).Handle(context.Background(), message(goodReport, tlsReport)); got != intake.OutcomeStored {
+		t.Fatalf("outcome = %v", got)
+	}
+	if len(a.puts) != 2 {
+		t.Fatalf("archived %d reports, want 2", len(a.puts))
+	}
+	dmarc, tls := a.puts[0], a.puts[1]
+	if dmarc.Kind != archive.KindDMARC || dmarc.OrgName != "google.com" || dmarc.Domain != "example.com" || string(dmarc.Raw) != goodReport || dmarc.Parsed == nil {
+		t.Errorf("DMARC archive entry: %+v", dmarc)
+	}
+	if tls.Kind != archive.KindTLSRPT || tls.Domain != "example.com" || tls.Begin.IsZero() {
+		t.Errorf("TLS-RPT archive entry: %+v", tls)
+	}
+
+	refused := &fakeStore{}
+	got := New(refused, nil, &log, WithArchive(&fakeArchive{err: errors.New("bucket unreachable")})).Handle(context.Background(), message(goodReport))
+	if got != intake.OutcomeRetry {
+		t.Fatalf("outcome with the archive down = %v, want retry", got)
+	}
+	if len(refused.saved) != 0 {
+		t.Fatal("a report the archive refused was stored")
 	}
 }
