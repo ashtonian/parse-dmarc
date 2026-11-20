@@ -9,6 +9,8 @@ const props = defineProps({
   enforced: { type: Number, default: 0 },
   volume: { type: Number, default: 0 },
   sourceCount: { type: Number, default: 0 },
+  unaligned: { type: Number, default: 0 },
+  unauthenticated: { type: Number, default: 0 },
   dateRange: { type: String, default: "Last 30 Days" },
   loading: { type: Boolean, default: false },
 });
@@ -183,6 +185,61 @@ const statusSubtext = computed(() => {
         <div class="stat-value mono">{{ fmt(sourceCount) }}</div>
         <div class="stat-desc">Unique IPs detected</div>
       </div>
+
+      <div class="card metric-card">
+        <div class="metric-header">
+          <span class="stat-label">Unaligned</span>
+          <svg
+            class="icon-subtle"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path
+              d="M18.84 12.25l1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"
+            />
+            <path
+              d="M5.17 11.75l-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"
+            />
+            <line x1="8" y1="2" x2="8" y2="5" />
+            <line x1="2" y1="8" x2="5" y2="8" />
+            <line x1="16" y1="19" x2="16" y2="22" />
+            <line x1="19" y1="16" x2="22" y2="16" />
+          </svg>
+        </div>
+        <div class="stat-value mono">{{ fmt(unaligned) }}</div>
+        <div class="stat-desc">SPF or DKIM passed for another domain</div>
+      </div>
+
+      <div class="card metric-card">
+        <div class="metric-header">
+          <span class="stat-label">Unauthenticated</span>
+          <svg
+            class="icon-subtle"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M19.69 14a6.9 6.9 0 0 0 .31-2V5l-8-3-3.16 1.18" />
+            <path
+              d="M4.73 4.73L4 5v7c0 6 8 10 8 10a20.29 20.29 0 0 0 5.62-4.38"
+            />
+            <line x1="1" y1="1" x2="23" y2="23" />
+          </svg>
+        </div>
+        <div class="stat-value mono">{{ fmt(unauthenticated) }}</div>
+        <div class="stat-desc">Neither SPF nor DKIM passed</div>
+      </div>
     </div>
   </div>
 </template>
@@ -230,10 +287,14 @@ const statusSubtext = computed(() => {
   gap: 16px;
 }
 
-/* Tablet & Up */
+/* Tablet & Up: the health card beside two rows of metrics */
 @media (min-width: 768px) {
   .stat-grid {
     grid-template-columns: 2fr 1fr 1fr;
+  }
+
+  .health-card {
+    grid-row: span 2;
   }
 }
 
@@ -372,7 +433,7 @@ const statusSubtext = computed(() => {
 .metric-card {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
 }
 .metric-header {
   display: flex;

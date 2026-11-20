@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from "vue";
+import DetailDrawer from "../common/DetailDrawer.vue";
 
 const props = defineProps({
   isOpen: Boolean,
@@ -16,16 +17,6 @@ const props = defineProps({
 const emit = defineEmits(["close"]);
 
 const activeTab = ref("overview");
-
-// Close on backdrop click
-const handleBackdropClick = () => {
-  emit("close");
-};
-
-// Close on escape key
-const handleKeydown = (e) => {
-  if (e.key === "Escape") emit("close");
-};
 
 // Helpers for status styling
 const getResultColor = (result) => {
@@ -84,456 +75,257 @@ const isAligned = (authDomain, record) => {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div
-      class="drawer-root"
-      :class="{ 'is-open': isOpen }"
-      @keydown="handleKeydown"
-    >
-      <div class="backdrop" @click="handleBackdropClick"></div>
+  <DetailDrawer
+    :is-open="isOpen"
+    :loading="loading"
+    :empty="!report"
+    :title="report?.ReportMetadata?.OrgName || 'Report Details'"
+    :subtitle="report?.PolicyPublished?.Domain || 'Unknown Domain'"
+    close-label="Close report details panel"
+    @close="emit('close')"
+  >
+    <!-- DMARC Verdict Card -->
+    <div class="verdict-card" :class="getBadgeClass(dmarcResult)">
+      <div class="verdict-row">
+        <span class="verdict-label">DMARC Result</span>
+        <span class="verdict-value">{{ dmarcResult.toUpperCase() }}</span>
+      </div>
+      <div class="verdict-meta">
+        <span
+          >Policy:
+          <strong>{{ report.PolicyPublished?.P || "none" }}</strong></span
+        >
+        <span
+          >Volume:
+          <strong>{{ totalMessages.toLocaleString() }} emails</strong></span
+        >
+      </div>
+    </div>
 
-      <div class="panel" @click.stop>
-        <!-- Header -->
-        <header class="panel-header" v-if="report">
-          <div>
-            <h2 class="panel-title">
-              {{ report.ReportMetadata?.OrgName || "Report Details" }}
-            </h2>
-            <div class="panel-subtitle">
-              {{ report.PolicyPublished?.Domain || "Unknown Domain" }}
-            </div>
-          </div>
-          <button
-            class="btn-close"
-            @click="emit('close')"
-            aria-label="Close report details panel"
-          >
+    <!-- Tabs -->
+    <div class="tabs">
+      <button
+        :class="{ active: activeTab === 'overview' }"
+        @click="activeTab = 'overview'"
+      >
+        Overview
+      </button>
+      <button
+        :class="{ active: activeTab === 'records' }"
+        @click="activeTab = 'records'"
+      >
+        Records ({{ report.Records?.length || 0 }})
+      </button>
+      <button
+        :class="{ active: activeTab === 'raw' }"
+        @click="activeTab = 'raw'"
+      >
+        Raw Data
+      </button>
+    </div>
+
+    <!-- Overview Tab -->
+    <div v-if="activeTab === 'overview'" class="tab-content">
+      <div class="info-grid">
+        <div class="info-item">
+          <span class="info-label">Report ID</span>
+          <span class="info-value font-mono">{{
+            report.ReportMetadata?.ReportID || "N/A"
+          }}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Contact Email</span>
+          <span class="info-value">{{
+            report.ReportMetadata?.Email || "N/A"
+          }}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Date Range</span>
+          <span class="info-value">
+            {{ formatDate(report.ReportMetadata?.DateRange?.Begin) }} -
+            {{ formatDate(report.ReportMetadata?.DateRange?.End) }}
+          </span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">DKIM Alignment</span>
+          <span class="info-value">{{
+            report.PolicyPublished?.ADKIM === "s" ? "Strict" : "Relaxed"
+          }}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">SPF Alignment</span>
+          <span class="info-value">{{
+            report.PolicyPublished?.ASPF === "s" ? "Strict" : "Relaxed"
+          }}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Subdomain Policy</span>
+          <span class="info-value">{{
+            report.PolicyPublished?.SP || "Same as domain"
+          }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Records Tab -->
+    <div v-if="activeTab === 'records'" class="tab-content">
+      <div v-if="!report.Records?.length" class="empty-state">
+        No records found in this report.
+      </div>
+
+      <div
+        v-for="(record, idx) in report.Records || []"
+        :key="idx"
+        class="record-card"
+      >
+        <div class="record-header">
+          <div class="record-ip">
             <svg
-              width="24"
-              height="24"
+              width="16"
+              height="16"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
               stroke-width="2"
             >
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
+              <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+              <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+              <line x1="6" y1="6" x2="6.01" y2="6" />
+              <line x1="6" y1="18" x2="6.01" y2="18" />
             </svg>
-          </button>
-        </header>
-
-        <!-- Loading State -->
-        <div v-if="loading" class="panel-loading">
-          <div class="spinner"></div>
-          <p>Loading report details...</p>
+            <span class="font-mono">{{ record.Row?.SourceIP || "N/A" }}</span>
+          </div>
+          <span class="record-count"
+            >{{ record.Row?.Count || 0 }} messages</span
+          >
         </div>
 
-        <!-- Body -->
-        <div class="panel-body" v-else-if="report">
-          <!-- DMARC Verdict Card -->
-          <div class="verdict-card" :class="getBadgeClass(dmarcResult)">
-            <div class="verdict-row">
-              <span class="verdict-label">DMARC Result</span>
-              <span class="verdict-value">{{ dmarcResult.toUpperCase() }}</span>
-            </div>
-            <div class="verdict-meta">
-              <span
-                >Policy:
-                <strong>{{ report.PolicyPublished?.P || "none" }}</strong></span
+        <div class="auth-grid">
+          <!-- SPF Section -->
+          <section class="auth-col">
+            <h4 class="section-heading">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
               >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              SPF
               <span
-                >Volume:
-                <strong
-                  >{{ totalMessages.toLocaleString() }} emails</strong
-                ></span
+                class="status-pill"
+                :class="getResultColor(record.Row?.PolicyEvaluated?.SPF)"
               >
-            </div>
-          </div>
-
-          <!-- Tabs -->
-          <div class="tabs">
-            <button
-              :class="{ active: activeTab === 'overview' }"
-              @click="activeTab = 'overview'"
-            >
-              Overview
-            </button>
-            <button
-              :class="{ active: activeTab === 'records' }"
-              @click="activeTab = 'records'"
-            >
-              Records ({{ report.Records?.length || 0 }})
-            </button>
-            <button
-              :class="{ active: activeTab === 'raw' }"
-              @click="activeTab = 'raw'"
-            >
-              Raw Data
-            </button>
-          </div>
-
-          <!-- Overview Tab -->
-          <div v-if="activeTab === 'overview'" class="tab-content">
-            <div class="info-grid">
-              <div class="info-item">
-                <span class="info-label">Report ID</span>
-                <span class="info-value font-mono">{{
-                  report.ReportMetadata?.ReportID || "N/A"
-                }}</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">Contact Email</span>
-                <span class="info-value">{{
-                  report.ReportMetadata?.Email || "N/A"
-                }}</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">Date Range</span>
-                <span class="info-value">
-                  {{ formatDate(report.ReportMetadata?.DateRange?.Begin) }} -
-                  {{ formatDate(report.ReportMetadata?.DateRange?.End) }}
-                </span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">DKIM Alignment</span>
-                <span class="info-value">{{
-                  report.PolicyPublished?.ADKIM === "s" ? "Strict" : "Relaxed"
-                }}</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">SPF Alignment</span>
-                <span class="info-value">{{
-                  report.PolicyPublished?.ASPF === "s" ? "Strict" : "Relaxed"
-                }}</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">Subdomain Policy</span>
-                <span class="info-value">{{
-                  report.PolicyPublished?.SP || "Same as domain"
-                }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Records Tab -->
-          <div v-if="activeTab === 'records'" class="tab-content">
-            <div v-if="!report.Records?.length" class="empty-state">
-              No records found in this report.
-            </div>
+                {{ record.Row?.PolicyEvaluated?.SPF || "unknown" }}
+              </span>
+            </h4>
 
             <div
-              v-for="(record, idx) in report.Records || []"
-              :key="idx"
-              class="record-card"
+              v-for="(spf, spfIdx) in record.AuthResults?.SPF || []"
+              :key="'spf-' + spfIdx"
+              class="auth-item"
             >
-              <div class="record-header">
-                <div class="record-ip">
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
-                    <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
-                    <line x1="6" y1="6" x2="6.01" y2="6" />
-                    <line x1="6" y1="18" x2="6.01" y2="18" />
-                  </svg>
-                  <span class="font-mono">{{
-                    record.Row?.SourceIP || "N/A"
-                  }}</span>
-                </div>
-                <span class="record-count"
-                  >{{ record.Row?.Count || 0 }} messages</span
-                >
-              </div>
-
-              <div class="auth-grid">
-                <!-- SPF Section -->
-                <section class="auth-col">
-                  <h4 class="section-heading">
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                    >
-                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                    </svg>
-                    SPF
-                    <span
-                      class="status-pill"
-                      :class="getResultColor(record.Row?.PolicyEvaluated?.SPF)"
-                    >
-                      {{ record.Row?.PolicyEvaluated?.SPF || "unknown" }}
-                    </span>
-                  </h4>
-
-                  <div
-                    v-for="(spf, spfIdx) in record.AuthResults?.SPF || []"
-                    :key="'spf-' + spfIdx"
-                    class="auth-item"
-                  >
-                    <div class="auth-header">
-                      <span class="domain-mono">{{ spf.Domain }}</span>
-                      <span
-                        class="status-text"
-                        :class="getResultColor(spf.Result)"
-                      >
-                        {{ spf.Result?.toUpperCase() }}
-                      </span>
-                    </div>
-                    <div class="auth-details">
-                      <span>Scope: {{ spf.Scope || "mfrom" }}</span>
-                      <span
-                        v-if="isAligned(spf.Domain, record)"
-                        class="alignment-tag aligned"
-                        >Aligned</span
-                      >
-                      <span v-else class="alignment-tag unaligned"
-                        >Unaligned</span
-                      >
-                    </div>
-                  </div>
-
-                  <div
-                    v-if="!record.AuthResults?.SPF?.length"
-                    class="empty-auth"
-                  >
-                    No SPF results
-                  </div>
-                </section>
-
-                <!-- DKIM Section -->
-                <section class="auth-col">
-                  <h4 class="section-heading">
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                    >
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                    </svg>
-                    DKIM
-                    <span
-                      class="status-pill"
-                      :class="getResultColor(record.Row?.PolicyEvaluated?.DKIM)"
-                    >
-                      {{ record.Row?.PolicyEvaluated?.DKIM || "unknown" }}
-                    </span>
-                  </h4>
-
-                  <div
-                    v-for="(dkim, dkimIdx) in record.AuthResults?.DKIM || []"
-                    :key="'dkim-' + dkimIdx"
-                    class="auth-item"
-                  >
-                    <div class="auth-header">
-                      <span class="domain-mono">{{ dkim.Domain }}</span>
-                      <span
-                        class="status-text"
-                        :class="getResultColor(dkim.Result)"
-                      >
-                        {{ dkim.Result?.toUpperCase() }}
-                      </span>
-                    </div>
-                    <div class="auth-details">
-                      <span>Selector: {{ dkim.Selector || "N/A" }}</span>
-                      <span
-                        v-if="isAligned(dkim.Domain, record)"
-                        class="alignment-tag aligned"
-                        >Aligned</span
-                      >
-                      <span v-else class="alignment-tag unaligned"
-                        >Unaligned</span
-                      >
-                    </div>
-                  </div>
-
-                  <div
-                    v-if="!record.AuthResults?.DKIM?.length"
-                    class="empty-auth"
-                  >
-                    No DKIM signatures
-                  </div>
-                </section>
-              </div>
-
-              <div class="record-footer">
-                <span
-                  >Disposition:
-                  <strong>{{
-                    record.Row?.PolicyEvaluated?.Disposition || "none"
-                  }}</strong></span
-                >
-                <span v-if="record.Identifiers?.HeaderFrom">
-                  From:
-                  <span class="font-mono">{{
-                    record.Identifiers.HeaderFrom
-                  }}</span>
+              <div class="auth-header">
+                <span class="domain-mono">{{ spf.Domain }}</span>
+                <span class="status-text" :class="getResultColor(spf.Result)">
+                  {{ spf.Result?.toUpperCase() }}
                 </span>
               </div>
+              <div class="auth-details">
+                <span>Scope: {{ spf.Scope || "mfrom" }}</span>
+                <span
+                  v-if="isAligned(spf.Domain, record)"
+                  class="alignment-tag aligned"
+                  >Aligned</span
+                >
+                <span v-else class="alignment-tag unaligned">Unaligned</span>
+              </div>
             </div>
-          </div>
 
-          <!-- Raw Data Tab -->
-          <div v-if="activeTab === 'raw'" class="tab-content">
-            <div class="raw-data-section">
-              <pre class="code-block">{{
-                JSON.stringify(report, null, 2)
-              }}</pre>
+            <div v-if="!record.AuthResults?.SPF?.length" class="empty-auth">
+              No SPF results
             </div>
-          </div>
+          </section>
+
+          <!-- DKIM Section -->
+          <section class="auth-col">
+            <h4 class="section-heading">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              DKIM
+              <span
+                class="status-pill"
+                :class="getResultColor(record.Row?.PolicyEvaluated?.DKIM)"
+              >
+                {{ record.Row?.PolicyEvaluated?.DKIM || "unknown" }}
+              </span>
+            </h4>
+
+            <div
+              v-for="(dkim, dkimIdx) in record.AuthResults?.DKIM || []"
+              :key="'dkim-' + dkimIdx"
+              class="auth-item"
+            >
+              <div class="auth-header">
+                <span class="domain-mono">{{ dkim.Domain }}</span>
+                <span class="status-text" :class="getResultColor(dkim.Result)">
+                  {{ dkim.Result?.toUpperCase() }}
+                </span>
+              </div>
+              <div class="auth-details">
+                <span>Selector: {{ dkim.Selector || "N/A" }}</span>
+                <span
+                  v-if="isAligned(dkim.Domain, record)"
+                  class="alignment-tag aligned"
+                  >Aligned</span
+                >
+                <span v-else class="alignment-tag unaligned">Unaligned</span>
+              </div>
+            </div>
+
+            <div v-if="!record.AuthResults?.DKIM?.length" class="empty-auth">
+              No DKIM signatures
+            </div>
+          </section>
         </div>
 
-        <!-- Empty State -->
-        <div v-else class="panel-empty">
-          <p>Select a report to view details</p>
+        <div class="record-footer">
+          <span
+            >Disposition:
+            <strong>{{
+              record.Row?.PolicyEvaluated?.Disposition || "none"
+            }}</strong></span
+          >
+          <span v-if="record.Identifiers?.HeaderFrom">
+            From:
+            <span class="font-mono">{{ record.Identifiers.HeaderFrom }}</span>
+          </span>
         </div>
       </div>
     </div>
-  </Teleport>
+
+    <!-- Raw Data Tab -->
+    <div v-if="activeTab === 'raw'" class="tab-content">
+      <div class="raw-data-section">
+        <pre class="code-block">{{ JSON.stringify(report, null, 2) }}</pre>
+      </div>
+    </div>
+  </DetailDrawer>
 </template>
 
 <style scoped>
-/* --- Drawer Mechanism --- */
-.drawer-root {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  pointer-events: none;
-  visibility: hidden;
-  transition: visibility 0.3s;
-}
-
-.drawer-root.is-open {
-  pointer-events: auto;
-  visibility: visible;
-}
-
-.backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.5);
-  backdrop-filter: blur(2px);
-  opacity: 0;
-  transition: opacity 0.3s;
-}
-
-.is-open .backdrop {
-  opacity: 1;
-}
-
-.panel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 100%;
-  max-width: 540px;
-  background: var(--bg-card);
-  border-left: 1px solid var(--border-subtle);
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
-  transform: translateX(100%);
-  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.is-open .panel {
-  transform: translateX(0);
-}
-
-/* --- Panel Header --- */
-.panel-header {
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--border-subtle);
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  background: var(--bg-app);
-  flex-shrink: 0;
-}
-
-.panel-title {
-  margin: 0;
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: var(--text-main);
-}
-
-.panel-subtitle {
-  color: var(--text-muted);
-  font-size: 0.875rem;
-  font-family: var(--font-mono);
-  margin-top: 4px;
-}
-
-.btn-close {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-muted);
-  padding: 4px;
-  border-radius: 4px;
-  transition: background 0.2s;
-  flex-shrink: 0;
-}
-.btn-close:hover {
-  background: var(--border-subtle);
-  color: var(--text-main);
-}
-
-/* --- Loading State --- */
-.panel-loading {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  color: var(--text-muted);
-}
-
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--border-subtle);
-  border-top-color: var(--c-primary);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* --- Panel Body --- */
-.panel-body {
-  padding: 20px 24px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.panel-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-}
-
 /* --- Verdict Card --- */
 .verdict-card {
   padding: 16px;
@@ -837,10 +629,6 @@ const isAligned = (authDomain, record) => {
 
 /* --- Responsive --- */
 @media (max-width: 600px) {
-  .panel {
-    max-width: 100%;
-  }
-
   .auth-grid {
     grid-template-columns: 1fr;
   }

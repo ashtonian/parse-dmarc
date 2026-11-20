@@ -84,6 +84,30 @@ export const getReportById = (id) =>
   createApiClient().get(`reports/${id}`).json();
 
 /**
+ * TLS-RPT statistics: session totals, per policy domain and per failure type
+ */
+export const getTLSStatistics = () =>
+  createApiClient().get("tlsrpt/statistics").json();
+
+/**
+ * TLS-RPT reports, newest first
+ * @param {Object} options - Query options
+ * @param {number} options.limit - Maximum number of reports to return
+ * @param {number} options.offset - Offset for pagination
+ */
+export const getTLSReports = ({ limit = 20, offset = 0 } = {}) =>
+  createApiClient()
+    .get("tlsrpt/reports", { searchParams: { limit, offset } })
+    .json();
+
+/**
+ * Get a single TLS-RPT report by ID, with its policies and failure details
+ * @param {string|number} id - Report ID
+ */
+export const getTLSReportById = (id) =>
+  createApiClient().get(`tlsrpt/reports/${id}`).json();
+
+/**
  * Build the server runs: version, commit and build date
  */
 export const getVersion = () => createApiClient().get("version").json();

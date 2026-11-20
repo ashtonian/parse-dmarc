@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import DashboardHero from "./components/dashboard/DashboardHero.vue";
 import RecentReports from "./components/dashboard/RecentReports.vue";
 import ReportDrawer from "./components/dashboard/ReportDrawer.vue";
+import TopSources from "./components/dashboard/TopSources.vue";
+import TlsView from "./components/tlsrpt/TlsView.vue";
 import DnsGenerator from "./components/tools/DnsGenerator.vue";
 import SettingsModal from "./components/settings/SettingsModal.vue";
 import {
@@ -27,7 +29,7 @@ const loading = ref(true);
 const loadingDetail = ref(false);
 const isDrawerOpen = ref(false);
 const isSettingsOpen = ref(false);
-const currentView = ref("dashboard"); // 'dashboard' | 'generator'
+const currentView = ref("dashboard"); // 'dashboard' | 'tlsrpt' | 'generator'
 const buildInfo = ref(null);
 
 // Auto-refresh interval
@@ -107,20 +109,13 @@ const sourceCount = computed(() => {
   return statistics.value?.unique_source_ips ?? 0;
 });
 
-// Helpers
-const getPassPercentage = (source) => {
-  const total = source.count;
-  return total > 0 ? (source.pass / total) * 100 : 0;
-};
+const unalignedCount = computed(
+  () => statistics.value?.unaligned_messages ?? 0,
+);
 
-const getFailPercentage = (source) => {
-  const total = source.count;
-  return total > 0 ? (source.fail / total) * 100 : 0;
-};
-
-const formatNumber = (num) => {
-  return new Intl.NumberFormat().format(num);
-};
+const unauthenticatedCount = computed(
+  () => statistics.value?.unauthenticated_messages ?? 0,
+);
 
 // Release builds carry a bare semver ("1.7.2"); source builds say "dev".
 const versionLabel = computed(() => {
@@ -178,6 +173,7 @@ onUnmounted(() => {
             class="nav-link"
             :class="{ active: currentView === 'dashboard' }"
             @click="currentView = 'dashboard'"
+            aria-label="Dashboard"
           >
             <svg
               width="16"
@@ -192,12 +188,32 @@ onUnmounted(() => {
               <rect x="14" y="12" width="7" height="9" />
               <rect x="3" y="16" width="7" height="5" />
             </svg>
-            Dashboard
+            <span>Dashboard</span>
+          </button>
+          <button
+            class="nav-link"
+            :class="{ active: currentView === 'tlsrpt' }"
+            @click="currentView = 'tlsrpt'"
+            aria-label="TLS-RPT"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            <span>TLS-RPT</span>
           </button>
           <button
             class="nav-link"
             :class="{ active: currentView === 'generator' }"
             @click="currentView = 'generator'"
+            aria-label="DNS Generator"
           >
             <svg
               width="16"
@@ -211,7 +227,7 @@ onUnmounted(() => {
               <line x1="3" y1="9" x2="21" y2="9" />
               <line x1="9" y1="21" x2="9" y2="9" />
             </svg>
-            DNS Generator
+            <span>DNS Generator</span>
           </button>
         </div>
 
@@ -305,76 +321,15 @@ onUnmounted(() => {
             :enforced="enforcedCount"
             :volume="totalVolume"
             :source-count="sourceCount"
+            :unaligned="unalignedCount"
+            :unauthenticated="unauthenticatedCount"
             :loading="loading"
             @refresh="refreshData"
           />
 
           <!-- Top Sending Sources -->
           <section class="section">
-            <div class="card sources-card">
-              <h2 class="section-title">
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
-                  <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
-                  <line x1="6" y1="6" x2="6.01" y2="6" />
-                  <line x1="6" y1="18" x2="6.01" y2="18" />
-                </svg>
-                Top Sending Sources
-              </h2>
-
-              <div class="source-list" v-if="topSources?.length > 0">
-                <div
-                  v-for="source in topSources"
-                  :key="source.source_ip"
-                  class="source-item"
-                >
-                  <div class="source-ip font-mono">{{ source.source_ip }}</div>
-                  <div class="source-stats">
-                    <div class="source-count">
-                      {{ formatNumber(source.count) }} messages
-                    </div>
-                    <div class="source-bar">
-                      <div
-                        class="source-bar-pass"
-                        :style="{ width: getPassPercentage(source) + '%' }"
-                      ></div>
-                      <div
-                        class="source-bar-fail"
-                        :style="{ width: getFailPercentage(source) + '%' }"
-                      ></div>
-                    </div>
-                    <div class="source-legend">
-                      <span class="legend-pass">{{ source.pass }} pass</span>
-                      <span class="legend-fail">{{ source.fail }} fail</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div v-else class="empty-state">
-                <svg
-                  width="40"
-                  height="40"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-                <p>
-                  No data available yet. Reports will appear here once fetched.
-                </p>
-              </div>
-            </div>
+            <TopSources :sources="topSources" />
           </section>
 
           <!-- Recent Reports Table -->
@@ -385,6 +340,9 @@ onUnmounted(() => {
             />
           </section>
         </template>
+
+        <!-- TLS-RPT View -->
+        <TlsView v-else-if="currentView === 'tlsrpt'" />
 
         <!-- DNS Generator View -->
         <template v-else-if="currentView === 'generator'">
@@ -650,128 +608,6 @@ onUnmounted(() => {
   margin-top: 24px;
 }
 
-.section-title {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-main);
-  margin: 0 0 16px 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.section-title svg {
-  color: var(--text-muted);
-}
-
-/* --- Card --- */
-.card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-card);
-  padding: 20px;
-}
-
-/* --- Sources Card --- */
-.sources-card {
-  padding: 20px;
-}
-
-.sources-card .section-title {
-  margin-bottom: 20px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.source-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.source-item {
-  padding: 14px 16px;
-  background: var(--bg-app);
-  border-radius: 8px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  border: 1px solid var(--border-subtle);
-}
-
-.source-ip {
-  font-weight: 600;
-  color: var(--text-main);
-  min-width: 140px;
-  font-size: 0.875rem;
-}
-
-.source-stats {
-  flex: 1;
-}
-
-.source-count {
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-  margin-bottom: 6px;
-}
-
-.source-bar {
-  height: 6px;
-  background: var(--border-subtle);
-  border-radius: 3px;
-  overflow: hidden;
-  display: flex;
-  margin-bottom: 6px;
-}
-
-.source-bar-pass {
-  background: var(--c-success);
-  transition: width 0.3s;
-}
-
-.source-bar-fail {
-  background: var(--c-danger);
-  transition: width 0.3s;
-}
-
-.source-legend {
-  display: flex;
-  gap: 12px;
-  font-size: 0.75rem;
-}
-
-.legend-pass {
-  color: var(--c-success);
-  font-weight: 500;
-}
-
-.legend-fail {
-  color: var(--c-danger);
-  font-weight: 500;
-}
-
-/* --- Empty State --- */
-.empty-state {
-  text-align: center;
-  padding: 40px 20px;
-  color: var(--text-muted);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-
-.empty-state svg {
-  opacity: 0.3;
-}
-
-.empty-state p {
-  margin: 0;
-  font-size: 0.875rem;
-}
-
 /* --- Footer --- */
 .footer {
   background: var(--bg-card);
@@ -871,11 +707,6 @@ onUnmounted(() => {
   opacity: 0.7;
 }
 
-/* --- Utilities --- */
-.font-mono {
-  font-family: var(--font-mono);
-}
-
 /* --- Responsive --- */
 @media (max-width: 768px) {
   .nav-container {
@@ -900,20 +731,6 @@ onUnmounted(() => {
 
   .container {
     padding: 0 16px;
-  }
-
-  .source-item {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .source-ip {
-    min-width: auto;
-    margin-bottom: 8px;
-  }
-
-  .source-stats {
-    width: 100%;
   }
 
   .footer-content {

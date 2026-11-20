@@ -23,6 +23,12 @@ for (var arg of process.argv.slice(2)) {
   var text = await page.$eval("#app", function appText(el) {
     return el.innerText;
   });
+  // The TLS-RPT view requests its data only once it is opened.
+  await page.click("nav ::-p-text(TLS-RPT)");
+  await page.waitForNetworkIdle();
+  var tlsText = await page.$eval("#app", function appText(el) {
+    return el.innerText;
+  });
   await page.close();
 
   var problems = [];
@@ -40,7 +46,13 @@ for (var arg of process.argv.slice(2)) {
       problems.push(`${r.status}: ${path}`);
     }
   }
-  for (var want of ["/assets/", "/api/statistics", "/api/reports"]) {
+  for (var want of [
+    "/assets/",
+    "/api/statistics",
+    "/api/reports",
+    "/api/tlsrpt/statistics",
+    "/api/tlsrpt/reports",
+  ]) {
     var hit = own.some(function requested(r) {
       return r.url.pathname.startsWith(prefix + want);
     });
@@ -49,6 +61,9 @@ for (var arg of process.argv.slice(2)) {
   // Rendered by the Vue bundle, absent from the static index.html.
   if (!text.includes("DNS Generator")) {
     problems.push("dashboard did not render");
+  }
+  if (!tlsText.includes("TLS Reporting")) {
+    problems.push("TLS-RPT view did not render");
   }
 
   // A blocked script shows up both as a 404 response and a failed request.

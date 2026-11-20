@@ -40,7 +40,7 @@ When your DMARC record carries a `rua=` address, mail receivers such as Google, 
 - Parses gzip, zip and raw XML, with a 16 MB decompression cap per report.
 - Parses SMTP TLS Reporting reports too ([RFC 8460](https://www.rfc-editor.org/rfc/rfc8460)): the JSON reports mail receivers send to the `rua=` of a `_smtp._tls` record, telling which sessions to your MX hosts negotiated TLS under your MTA-STS or DANE policy and why the others failed. They can arrive in the same mailbox as the DMARC reports.
 - Stores everything in one SQLite file. No database server, no JVM.
-- Shows pass rate, message volume and top sending sources, and opens any report down to its raw records.
+- Shows pass rate, message volume, unaligned and unauthenticated mail, the top sending sources with the sender each address is attributed to, and a TLS-RPT view of sessions and failure types per policy domain, and opens any report down to its raw records.
 - Generates your `_dmarc` TXT record from a form.
 - Exposes 37 Prometheus metrics, including per-domain freshness and failure timestamps to alert on, and ships a Grafana dashboard.
 - Serves an MCP server, so an AI assistant can query your reports.
