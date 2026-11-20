@@ -74,7 +74,7 @@ func TestFetchMaildirReportsDeadlettersUnreadableMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fetchReports(context.Background(), source, ingest.New(store, nil, log), nil); err != nil {
+	if err := fetchReports(context.Background(), source, ingest.New(store, nil, log), nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -115,7 +115,7 @@ func TestFetchRetriesWhenTheStoreFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = broken.Close()
-	if err := fetchReports(context.Background(), source, ingest.New(broken, nil, log), nil); err != nil {
+	if err := fetchReports(context.Background(), source, ingest.New(broken, nil, log), nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "new", "1.report")); err != nil {
@@ -127,7 +127,7 @@ func TestFetchRetriesWhenTheStoreFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
-	if err := fetchReports(context.Background(), source, ingest.New(store, nil, log), nil); err != nil {
+	if err := fetchReports(context.Background(), source, ingest.New(store, nil, log), nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "cur", "1.report:2,S")); err != nil {

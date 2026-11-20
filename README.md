@@ -153,8 +153,12 @@ Every setting in this table is an environment variable or a key in `config.json`
 | PostgreSQL idle connection                | `DATABASE_CONN_MAX_IDLE_SECONDS`     | `300`                                                        |
 | HTTP listen                               | `SERVER_HOST`, `SERVER_PORT`         | `127.0.0.1`, `8080`, `0.0.0.0` in Docker                     |
 | Seconds between fetches                   | `FETCH_INTERVAL`                     | `300`                                                        |
+| Seconds one fetch may take                | `FETCH_TIMEOUT_SECONDS`              | `600`                                                        |
+| Seconds to drain on shutdown              | `SHUTDOWN_TIMEOUT_SECONDS`           | `10`                                                         |
 | Log level                                 | `LOG_LEVEL`                          | `info`                                                       |
 | Log format: `console` or `json`           | `LOG_FORMAT`                         | `console`                                                    |
+
+On `SIGTERM` or `SIGINT` the fetch in progress is cancelled (mail it had not finished with is read again on the next start), the HTTP server stops accepting connections and gives in-flight requests `SHUTDOWN_TIMEOUT_SECONDS` to finish, and only then is the database closed. A fetch that runs longer than `FETCH_TIMEOUT_SECONDS` is cancelled the same way and resumes on the next cycle.
 
 The dashboard listens on loopback unless `SERVER_HOST` says otherwise. Set `SERVER_HOST=0.0.0.0` to reach it from another host; the container images already do, since Docker forwards the port to the container's interface rather than its loopback. A `server.host` in the config file overrides `SERVER_HOST`, which is why the sample config leaves the key out.
 

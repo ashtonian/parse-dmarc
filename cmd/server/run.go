@@ -83,10 +83,23 @@ func run(ctx context.Context, version, commit, date string) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	server := api.NewServer(store, cfg.Server.Host, cfg.Server.Port, m, log, api.VersionInfo{Version: version, Commit: commit, Date: date})
+	server := api.NewServer(store, cfg.Server.Host, cfg.Server.Port, m, log,
+		api.VersionInfo{Version: version, Commit: commit, Date: date},
+		api.WithShutdownTimeout(time.Duration(cfg.Server.ShutdownTimeoutSeconds)*time.Second))
 	serverErrChan := make(chan error, 1)
 	go func() {
 		serverErrChan <- server.Start(ctx)
+	}()
+	// The store closes after the server has drained: wait for Start on
+	// every way out once it is running.
+	serverDone := false
+	defer func() {
+		stop()
+		if !serverDone {
+			if err := <-serverErrChan; err != nil {
+				log.Error().Err(err).Msg("server shutdown")
+			}
+		}
 	}()
 
 	// Refresh metrics on startup
@@ -98,6 +111,7 @@ func run(ctx context.Context, version, commit, date string) error {
 		case <-ctx.Done():
 			log.Info().Msg("shutting down")
 		case err := <-serverErrChan:
+			serverDone = true
 			if err != nil {
 				return fmt.Errorf("server error: %w", err)
 			}
@@ -110,9 +124,10 @@ func run(ctx context.Context, version, commit, date string) error {
 		return fmt.Errorf("configure mail source: %w", err)
 	}
 	pipeline := ingest.New(store, m, log)
+	fetchTimeout := time.Duration(cfg.FetchTimeoutSeconds) * time.Second
 
 	if fetchOnce {
-		if err := fetchReports(ctx, source, pipeline, m); err != nil {
+		if err := fetchReports(ctx, source, pipeline, m, fetchTimeout); err != nil {
 			return fmt.Errorf("failed to fetch reports: %w", err)
 		}
 		server.RefreshMetrics(ctx)
@@ -122,7 +137,7 @@ func run(ctx context.Context, version, commit, date string) error {
 
 	log.Info().Int("interval_seconds", fetchInterval).Msg("starting continuous fetch mode")
 
-	if err := fetchReports(ctx, source, pipeline, m); err != nil {
+	if err := fetchReports(ctx, source, pipeline, m, fetchTimeout); err != nil {
 		log.Error().Err(err).Msg("initial fetch failed")
 	}
 	server.RefreshMetrics(ctx)
@@ -133,7 +148,7 @@ func run(ctx context.Context, version, commit, date string) error {
 	for {
 		select {
 		case <-ticker.C:
-			if err := fetchReports(ctx, source, pipeline, m); err != nil {
+			if err := fetchReports(ctx, source, pipeline, m, fetchTimeout); err != nil {
 				log.Error().Err(err).Msg("fetch failed")
 			}
 			server.RefreshMetrics(ctx)
@@ -141,9 +156,11 @@ func run(ctx context.Context, version, commit, date string) error {
 			log.Info().Msg("shutting down")
 			return nil
 		case err := <-serverErrChan:
+			serverDone = true
 			if err != nil {
 				return fmt.Errorf("server error: %w", err)
 			}
+			return nil
 		}
 	}
 }
@@ -163,7 +180,12 @@ func newSource(cfg *config.Config, ledger intake.Ledger, m *metrics.Metrics) (in
 
 // fetchReports runs one fetch cycle: the source hands each new message to
 // the pipeline and settles it by the outcome.
-func fetchReports(ctx context.Context, source intake.Source, pipeline *ingest.Pipeline, m *metrics.Metrics) error {
+func fetchReports(ctx context.Context, source intake.Source, pipeline *ingest.Pipeline, m *metrics.Metrics, timeout time.Duration) error {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	log.Info().Str("source", source.Name()).Msg("fetching reports")
 	start := time.Now()
 	m.FetchCycle()
