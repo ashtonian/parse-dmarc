@@ -127,33 +127,34 @@ One click on a platform, or a template for the self-hosted PaaS you already run.
 
 Every setting in this table is an environment variable or a key in `config.json`. Environment is read first and the file overrides it. The command-line flags further down take an environment variable but no `config.json` key.
 
-| Setting                            | Environment variable                 | Default                                                      |
-| ---------------------------------- | ------------------------------------ | ------------------------------------------------------------ |
-| IMAP host and port                 | `IMAP_HOST`, `IMAP_PORT`             | required, `993`                                              |
-| IMAP username and password         | `IMAP_USERNAME`, `IMAP_PASSWORD`     | required                                                     |
-| Mailbox to read                    | `IMAP_MAILBOX`                       | `INBOX`                                                      |
-| Implicit TLS                       | `IMAP_USE_TLS`                       | `true`                                                       |
-| STARTTLS on a plaintext port       | `IMAP_STARTTLS`                      | `false`                                                      |
-| Internal CA bundle, PEM            | `IMAP_TLS_CA_FILE`                   | unset                                                        |
-| Skip certificate verification      | `IMAP_TLS_SKIP_VERIFY`               | `false`                                                      |
-| Mark fetched mail as seen          | `IMAP_MARK_AS_SEEN`                  | `true`                                                       |
-| Move processed mail to             | `IMAP_PROCESSED_MAILBOX`             | unset                                                        |
-| Never flag or move mail            | `IMAP_READ_ONLY`                     | `false`                                                      |
-| JMAP intake instead of IMAP        | `JMAP_SESSION_URL`, `JMAP_TOKEN`     | unset                                                        |
-| JMAP folder to read                | `JMAP_MAILBOX`                       | `INBOX`                                                      |
-| Refuse a JMAP token that can write | `JMAP_REQUIRE_READ_ONLY`             | `true`                                                       |
-| JMAP request timeout, seconds      | `JMAP_TIMEOUT_SECONDS`               | `60`                                                         |
-| Maildir intake instead of IMAP     | `MAILDIR_PATH`                       | unset                                                        |
-| Maildir deadletter mailbox         | `IMAP_DEADLETTER_BOX`                | `DEADLETTER`                                                 |
-| Database file                      | `DATABASE_PATH`                      | `~/.parse-dmarc/db.sqlite`, `/data/parse-dmarc.db` in Docker |
-| PostgreSQL instead of SQLite       | `DATABASE_URL`                       | unset                                                        |
-| PostgreSQL pool size               | `DATABASE_MAX_OPEN_CONNS`            | `4`                                                          |
-| PostgreSQL connection lifetime     | `DATABASE_CONN_MAX_LIFETIME_SECONDS` | `1800`                                                       |
-| PostgreSQL idle connection         | `DATABASE_CONN_MAX_IDLE_SECONDS`     | `300`                                                        |
-| HTTP listen                        | `SERVER_HOST`, `SERVER_PORT`         | `127.0.0.1`, `8080`, `0.0.0.0` in Docker                     |
-| Seconds between fetches            | `FETCH_INTERVAL`                     | `300`                                                        |
-| Log level                          | `LOG_LEVEL`                          | `info`                                                       |
-| Log format: `console` or `json`    | `LOG_FORMAT`                         | `console`                                                    |
+| Setting                                   | Environment variable                 | Default                                                      |
+| ----------------------------------------- | ------------------------------------ | ------------------------------------------------------------ |
+| IMAP host and port                        | `IMAP_HOST`, `IMAP_PORT`             | required, `993`                                              |
+| IMAP username and password                | `IMAP_USERNAME`, `IMAP_PASSWORD`     | required                                                     |
+| Mailbox to read                           | `IMAP_MAILBOX`                       | `INBOX`                                                      |
+| Implicit TLS                              | `IMAP_USE_TLS`                       | `true`                                                       |
+| STARTTLS on a plaintext port              | `IMAP_STARTTLS`                      | `false`                                                      |
+| Internal CA bundle, PEM                   | `IMAP_TLS_CA_FILE`                   | unset                                                        |
+| Skip certificate verification             | `IMAP_TLS_SKIP_VERIFY`               | `false`                                                      |
+| Mark fetched mail as seen                 | `IMAP_MARK_AS_SEEN`                  | `true`                                                       |
+| Move processed mail to                    | `IMAP_PROCESSED_MAILBOX`             | unset                                                        |
+| Never flag or move mail                   | `IMAP_READ_ONLY`                     | `false`                                                      |
+| IMAP connect and command timeout, seconds | `IMAP_TIMEOUT_SECONDS`               | `60`                                                         |
+| JMAP intake instead of IMAP               | `JMAP_SESSION_URL`, `JMAP_TOKEN`     | unset                                                        |
+| JMAP folder to read                       | `JMAP_MAILBOX`                       | `INBOX`                                                      |
+| Refuse a JMAP token that can write        | `JMAP_REQUIRE_READ_ONLY`             | `true`                                                       |
+| JMAP request timeout, seconds             | `JMAP_TIMEOUT_SECONDS`               | `60`                                                         |
+| Maildir intake instead of IMAP            | `MAILDIR_PATH`                       | unset                                                        |
+| Maildir deadletter mailbox                | `IMAP_DEADLETTER_BOX`                | `DEADLETTER`                                                 |
+| Database file                             | `DATABASE_PATH`                      | `~/.parse-dmarc/db.sqlite`, `/data/parse-dmarc.db` in Docker |
+| PostgreSQL instead of SQLite              | `DATABASE_URL`                       | unset                                                        |
+| PostgreSQL pool size                      | `DATABASE_MAX_OPEN_CONNS`            | `4`                                                          |
+| PostgreSQL connection lifetime            | `DATABASE_CONN_MAX_LIFETIME_SECONDS` | `1800`                                                       |
+| PostgreSQL idle connection                | `DATABASE_CONN_MAX_IDLE_SECONDS`     | `300`                                                        |
+| HTTP listen                               | `SERVER_HOST`, `SERVER_PORT`         | `127.0.0.1`, `8080`, `0.0.0.0` in Docker                     |
+| Seconds between fetches                   | `FETCH_INTERVAL`                     | `300`                                                        |
+| Log level                                 | `LOG_LEVEL`                          | `info`                                                       |
+| Log format: `console` or `json`           | `LOG_FORMAT`                         | `console`                                                    |
 
 The dashboard listens on loopback unless `SERVER_HOST` says otherwise. Set `SERVER_HOST=0.0.0.0` to reach it from another host; the container images already do, since Docker forwards the port to the container's interface rather than its loopback. A `server.host` in the config file overrides `SERVER_HOST`, which is why the sample config leaves the key out.
 
