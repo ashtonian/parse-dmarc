@@ -39,6 +39,7 @@ type Config struct {
 	JMAP        JMAPConfig     `json:"jmap"`
 	Maildir     MaildirConfig  `json:"maildir"`
 	Database    DatabaseConfig `json:"database"`
+	Enrich      EnrichConfig   `json:"enrich"`
 	Server      ServerConfig   `json:"server"`
 }
 
@@ -98,6 +99,25 @@ type MaildirConfig struct {
 	// message no report could be read from, so the operator sees what the
 	// parser dropped instead of it passing as processed.
 	DeadletterMailbox string `json:"deadletter_mailbox" env:"IMAP_DEADLETTER_BOX" envDefault:"DEADLETTER"`
+}
+
+// EnrichConfig controls how sending addresses are attributed to senders:
+// forward-confirmed reverse DNS, a service map of reverse DNS domains (the
+// format of parsedmarc's base_reverse_dns_map.csv) and MMDB IP databases
+// (IPinfo Lite, MaxMind GeoLite2, DB-IP Lite). The files are the operator's
+// to download; none ships with Parse DMARC.
+type EnrichConfig struct {
+	ReverseDNS        bool     `json:"reverse_dns" env:"ENRICH_REVERSE_DNS" envDefault:"true"`
+	DNSServer         string   `json:"dns_server" env:"ENRICH_DNS_SERVER"`
+	DNSTimeoutSeconds int      `json:"dns_timeout_seconds" env:"ENRICH_DNS_TIMEOUT_SECONDS" envDefault:"2"`
+	ServiceMap        string   `json:"service_map" env:"ENRICH_SERVICE_MAP"`
+	IPDatabases       []string `json:"ip_databases" env:"ENRICH_IP_DATABASES" envSeparator:","`
+	RefreshDays       int      `json:"refresh_days" env:"ENRICH_REFRESH_DAYS" envDefault:"30"`
+}
+
+// Enabled reports whether any enrichment is configured.
+func (e EnrichConfig) Enabled() bool {
+	return e.ReverseDNS || e.ServiceMap != "" || len(e.IPDatabases) > 0
 }
 
 // DatabaseConfig holds database configuration. URL selects PostgreSQL and

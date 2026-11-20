@@ -6,11 +6,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/dmarcguardhq/parse-dmarc/internal/api"
 	"github.com/dmarcguardhq/parse-dmarc/internal/config"
+	"github.com/dmarcguardhq/parse-dmarc/internal/enrich"
 	"github.com/dmarcguardhq/parse-dmarc/internal/imap"
 	"github.com/dmarcguardhq/parse-dmarc/internal/ingest"
 	"github.com/dmarcguardhq/parse-dmarc/internal/intake"
@@ -124,7 +126,22 @@ func run(ctx context.Context, version, commit, date string) error {
 	if err != nil {
 		return fmt.Errorf("configure mail source: %w", err)
 	}
-	pipeline := ingest.New(store, m, log)
+	var pipelineOpts []ingest.Option
+	if cfg.Enrich.Enabled() {
+		enricher, err := newEnricher(cfg.Enrich)
+		if err != nil {
+			return fmt.Errorf("configure enrichment: %w", err)
+		}
+		defer func() { _ = enricher.Close() }()
+		pipelineOpts = append(pipelineOpts, ingest.WithEnricher(enricher, store,
+			time.Duration(cfg.Enrich.RefreshDays)*24*time.Hour))
+		log.Info().
+			Bool("reverse_dns", cfg.Enrich.ReverseDNS).
+			Bool("service_map", cfg.Enrich.ServiceMap != "").
+			Int("ip_databases", len(cfg.Enrich.IPDatabases)).
+			Msg("source enrichment enabled")
+	}
+	pipeline := ingest.New(store, m, log, pipelineOpts...)
 	fetchTimeout := time.Duration(cfg.FetchTimeoutSeconds) * time.Second
 
 	if fetchOnce {
@@ -166,6 +183,32 @@ func run(ctx context.Context, version, commit, date string) error {
 	}
 }
 
+// newEnricher builds the source enricher the configuration describes.
+func newEnricher(cfg config.EnrichConfig) (*enrich.Enricher, error) {
+	opts := []enrich.Option{
+		enrich.WithLookupTimeout(time.Duration(max(cfg.DNSTimeoutSeconds, 1)) * time.Second),
+	}
+	if cfg.DNSServer != "" {
+		opts = append(opts, enrich.WithDNSServer(cfg.DNSServer))
+	}
+	if !cfg.ReverseDNS {
+		opts = append(opts, enrich.WithOffline())
+	}
+	if cfg.ServiceMap != "" {
+		opts = append(opts, enrich.WithServiceMap(cfg.ServiceMap))
+	}
+	for _, path := range cfg.IPDatabases {
+		if path = strings.TrimSpace(path); path != "" {
+			opts = append(opts, enrich.WithIPDatabase(path))
+		}
+	}
+	return enrich.New(opts...)
+}
+
+// backlogBatch bounds how many addresses stored before enrichment are
+// looked up after each fetch.
+const backlogBatch = 200
+
 // newSource builds the mail source the configuration names: a Maildir when
 // MAILDIR_PATH is set, JMAP when JMAP_SESSION_URL is, IMAP otherwise. The
 // ledger keeps the progress of a read-only mailbox.
@@ -187,6 +230,7 @@ func fetchReports(ctx context.Context, source intake.Source, pipeline *ingest.Pi
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	defer pipeline.EnrichBacklog(ctx, backlogBatch)
 	log.Info().Str("source", source.Name()).Msg("fetching reports")
 	start := time.Now()
 	m.FetchCycle()

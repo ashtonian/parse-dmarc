@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 
+	"github.com/dmarcguardhq/parse-dmarc/internal/enrich"
 	"github.com/dmarcguardhq/parse-dmarc/internal/intake"
 	"github.com/dmarcguardhq/parse-dmarc/internal/parser"
 )
@@ -99,5 +101,67 @@ func TestHandleCancelledIsRetry(t *testing.T) {
 	cancel()
 	if got := New(&fakeStore{}, nil, &log).Handle(ctx, message(goodReport)); got != intake.OutcomeRetry {
 		t.Fatalf("outcome = %v, want retry", got)
+	}
+}
+
+type fakeEnricher struct{ asked [][]string }
+
+func (f *fakeEnricher) LookupAll(_ context.Context, ips []string, _ int) map[string]enrich.Source {
+	f.asked = append(f.asked, ips)
+	out := map[string]enrich.Source{}
+	for _, ip := range ips {
+		out[ip] = enrich.Source{IP: ip, Name: "looked up"}
+	}
+	return out
+}
+
+type fakeSources struct {
+	saved   map[string]enrich.Source
+	missing []string
+}
+
+func (f *fakeSources) SourcesToLookUp(_ context.Context, ips []string, _ time.Time) ([]string, error) {
+	var out []string
+	for _, ip := range ips {
+		if _, ok := f.saved[ip]; !ok {
+			out = append(out, ip)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeSources) SourcesMissing(context.Context, int) ([]string, error) { return f.missing, nil }
+
+func (f *fakeSources) SaveSources(_ context.Context, sources []enrich.Source) error {
+	for _, s := range sources {
+		f.saved[s.IP] = s
+	}
+	return nil
+}
+
+// A new DMARC report has its addresses looked up once; a duplicate, and an
+// address already cached, are not looked up again.
+func TestHandleEnrichesNewReports(t *testing.T) {
+	log := zerolog.Nop()
+	e := &fakeEnricher{}
+	src := &fakeSources{saved: map[string]enrich.Source{}}
+	p := New(&fakeStore{}, nil, &log, WithEnricher(e, src, 24*time.Hour))
+
+	for range 2 {
+		if got := p.Handle(context.Background(), message(goodReport)); got != intake.OutcomeStored {
+			t.Fatalf("outcome = %v", got)
+		}
+	}
+	if len(e.asked) != 1 || len(e.asked[0]) != 1 || e.asked[0][0] != "192.0.2.1" {
+		t.Fatalf("lookups = %v, want one for 192.0.2.1", e.asked)
+	}
+	if src.saved["192.0.2.1"].Name != "looked up" {
+		t.Fatalf("saved = %v", src.saved)
+	}
+
+	src.missing = []string{"203.0.113.5"}
+	p.EnrichBacklog(context.Background(), 10)
+	if _, ok := src.saved["203.0.113.5"]; !ok {
+		t.Fatal("backlog address not looked up")
 	}
 }

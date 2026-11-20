@@ -160,10 +160,18 @@ Every setting in this table is an environment variable or a key in `config.json`
 | Seconds between fetches                   | `FETCH_INTERVAL`                     | `300`                                                        |
 | Seconds one fetch may take                | `FETCH_TIMEOUT_SECONDS`              | `600`                                                        |
 | Seconds to drain on shutdown              | `SHUTDOWN_TIMEOUT_SECONDS`           | `10`                                                         |
+| Reverse DNS of sending IPs                | `ENRICH_REVERSE_DNS`                 | `true`                                                       |
+| DNS server for those lookups              | `ENRICH_DNS_SERVER`                  | system resolver                                              |
+| DNS lookup timeout, seconds               | `ENRICH_DNS_TIMEOUT_SECONDS`         | `2`                                                          |
+| Sender map, CSV                           | `ENRICH_SERVICE_MAP`                 | unset                                                        |
+| IP databases, MMDB, comma-separated       | `ENRICH_IP_DATABASES`                | unset                                                        |
+| Days before a sender is looked up again   | `ENRICH_REFRESH_DAYS`                | `30`                                                         |
 | Log level                                 | `LOG_LEVEL`                          | `info`                                                       |
 | Log format: `console` or `json`           | `LOG_FORMAT`                         | `console`                                                    |
 
 On `SIGTERM` or `SIGINT` the fetch in progress is cancelled (mail it had not finished with is read again on the next start), the HTTP server stops accepting connections and gives in-flight requests `SHUTDOWN_TIMEOUT_SECONDS` to finish, and only then is the database closed. A fetch that runs longer than `FETCH_TIMEOUT_SECONDS` is cancelled the same way and resumes on the next cycle.
+
+Each sending address of a new report is looked up once and cached in the `sources` table, then again after `ENRICH_REFRESH_DAYS`; addresses stored before are filled in after each fetch, 200 at a time. Its reverse DNS name counts only when it resolves back to the address (forward-confirmed), because whoever controls an address controls its PTR record. A confirmed name, or failing that the address's AS domain, is looked up in `ENRICH_SERVICE_MAP`, a CSV with the columns `base_reverse_dns,name,type` (parsedmarc's [`base_reverse_dns_map.csv`](https://github.com/domainaware/parsedmarc/tree/master/parsedmarc/resources/maps) has this format), to name the service; `ENRICH_IP_DATABASES` adds country and autonomous system from MMDB files such as IPinfo Lite, MaxMind GeoLite2 or DB-IP Lite. Both are files you download under their own licenses. `ENRICH_REVERSE_DNS=false` with neither file set turns enrichment off.
 
 The dashboard listens on loopback unless `SERVER_HOST` says otherwise. Set `SERVER_HOST=0.0.0.0` to reach it from another host; the container images already do, since Docker forwards the port to the container's interface rather than its loopback. A `server.host` in the config file overrides `SERVER_HOST`, which is why the sample config leaves the key out.
 

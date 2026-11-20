@@ -144,6 +144,15 @@ func (s *Storage) Dialect() string {
 	return s.dialect.String()
 }
 
+// falseLiteral is the dialect's boolean false, for COALESCE over a boolean
+// column.
+func (s *Storage) falseLiteral() string {
+	if s.dialect == dialectPostgres {
+		return "FALSE"
+	}
+	return "0"
+}
+
 // rebind rewrites ? placeholders as $1, $2, ... for PostgreSQL. Queries in
 // this package never carry a literal '?' inside a string.
 func (s *Storage) rebind(query string) string {

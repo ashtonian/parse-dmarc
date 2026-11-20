@@ -116,6 +116,14 @@ type TopSourceIP struct {
 	// nothing passed.
 	Unaligned       int `json:"unaligned"`
 	Unauthenticated int `json:"unauthenticated"`
+	// What is known about the address; empty until it has been looked up.
+	ReverseDNS         string `json:"reverse_dns"`
+	ReverseDNSVerified bool   `json:"reverse_dns_verified"`
+	Name               string `json:"name"`
+	Type               string `json:"type"`
+	Country            string `json:"country"`
+	ASN                int64  `json:"asn"`
+	ASName             string `json:"as_name"`
 }
 
 // SaveReport stores an aggregate report and its records. It returns false,
@@ -339,16 +347,25 @@ func (s *Storage) GetStatistics(ctx context.Context) (*Statistics, error) {
 func (s *Storage) GetTopSourceIPs(ctx context.Context, limit int) ([]TopSourceIP, error) {
 	rows, err := s.query(ctx, s.db, `
 		SELECT
-			source_ip,
-			SUM(count) as total_count,
-			SUM(CASE WHEN (dkim_result = 'pass' OR spf_result = 'pass') THEN count ELSE 0 END) as pass_count,
-			SUM(CASE WHEN (dkim_result != 'pass' AND spf_result != 'pass') THEN count ELSE 0 END) as fail_count,
-			SUM(CASE WHEN auth_class = 'unaligned' THEN count ELSE 0 END) as unaligned_count,
-			SUM(CASE WHEN auth_class = 'unauthenticated' THEN count ELSE 0 END) as unauthenticated_count
-		FROM records
-		GROUP BY source_ip
-		ORDER BY total_count DESC
-		LIMIT ?
+			t.source_ip, t.total_count, t.pass_count, t.fail_count, t.unaligned_count, t.unauthenticated_count,
+			COALESCE(src.reverse_dns, ''), COALESCE(src.reverse_dns_verified, `+s.falseLiteral()+`),
+			COALESCE(src.name, ''), COALESCE(src.type, ''), COALESCE(src.country, ''),
+			COALESCE(src.asn, 0), COALESCE(src.as_name, '')
+		FROM (
+			SELECT
+				source_ip,
+				SUM(count) as total_count,
+				SUM(CASE WHEN (dkim_result = 'pass' OR spf_result = 'pass') THEN count ELSE 0 END) as pass_count,
+				SUM(CASE WHEN (dkim_result != 'pass' AND spf_result != 'pass') THEN count ELSE 0 END) as fail_count,
+				SUM(CASE WHEN auth_class = 'unaligned' THEN count ELSE 0 END) as unaligned_count,
+				SUM(CASE WHEN auth_class = 'unauthenticated' THEN count ELSE 0 END) as unauthenticated_count
+			FROM records
+			GROUP BY source_ip
+			ORDER BY total_count DESC
+			LIMIT ?
+		) t
+		LEFT JOIN sources src ON src.ip = t.source_ip
+		ORDER BY t.total_count DESC
 	`, limit)
 
 	if err != nil {
@@ -359,13 +376,14 @@ func (s *Storage) GetTopSourceIPs(ctx context.Context, limit int) ([]TopSourceIP
 	var results []TopSourceIP
 	for rows.Next() {
 		var r TopSourceIP
-		if err := rows.Scan(&r.SourceIP, &r.Count, &r.Pass, &r.Fail, &r.Unaligned, &r.Unauthenticated); err != nil {
+		if err := rows.Scan(&r.SourceIP, &r.Count, &r.Pass, &r.Fail, &r.Unaligned, &r.Unauthenticated,
+			&r.ReverseDNS, &r.ReverseDNSVerified, &r.Name, &r.Type, &r.Country, &r.ASN, &r.ASName); err != nil {
 			return nil, fmt.Errorf("scan source IP row: %w", err)
 		}
 		results = append(results, r)
 	}
 
-	return results, nil
+	return results, rows.Err()
 }
 
 // DomainStats holds statistics for a single domain
