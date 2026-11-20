@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,7 +19,7 @@ import (
 // tool already applies: a limit above storage.MaxReportLimit returns
 // MaxReportLimit rows, not the whole table.
 func TestHandleReportsLimitCapped(t *testing.T) {
-	store, err := storage.NewStorage(":memory:")
+	store, err := storage.Open(context.Background(), storage.Options{Path: ":memory:"})
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -34,7 +35,7 @@ func TestHandleReportsLimitCapped(t *testing.T) {
 			},
 			PolicyPublished: parser.PolicyPublished{Domain: "example.com", P: "none"},
 		}
-		if err := store.SaveReport(feedback); err != nil {
+		if _, err := store.SaveReport(context.Background(), feedback); err != nil {
 			t.Fatalf("Failed to save report %d: %v", i, err)
 		}
 	}

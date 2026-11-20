@@ -60,6 +60,20 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # The storage tests run against SQLite and, through
+    # PARSE_DMARC_TEST_POSTGRES_URL, this PostgreSQL.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -73,6 +87,8 @@ jobs:
           echo '<h1>Parse-DMARC API</h1>' > internal/api/dist/index.html
       - name: Go test
         run: go test -race -count=1 ./...
+        env:
+          PARSE_DMARC_TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
 
   # PR and merge group only: the queue built the commit the push lands.
   simulate-prod:

@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,10 +11,6 @@ import (
 
 	"github.com/dmarcguardhq/parse-dmarc/internal/parser"
 )
-
-type Storage struct {
-	db *sql.DB
-}
 
 type ReportSummary struct {
 	ID                int64  `json:"id"`
@@ -112,26 +110,32 @@ type TopSourceIP struct {
 	Fail     int    `json:"fail"`
 }
 
-func (s *Storage) SaveReport(feedback *parser.Feedback) error {
+// SaveReport stores an aggregate report and its records. It returns false,
+// and stores nothing, when the report is already stored: the same reporter,
+// report ID and policy domain.
+func (s *Storage) SaveReport(ctx context.Context, feedback *parser.Feedback) (bool, error) {
 	rawReport, err := json.Marshal(feedback)
 	if err != nil {
-		return fmt.Errorf("failed to marshal report: %w", err)
+		return false, fmt.Errorf("marshal report: %w", err)
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return false, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	result, err := tx.Exec(`
-		INSERT OR IGNORE INTO reports (
+	var reportID int64
+	err = s.queryRow(ctx, tx, `
+		INSERT INTO reports (
 			report_id, org_name, email, domain,
 			date_begin, date_end, created_at,
 			policy_p, policy_sp, policy_pct,
 			total_messages, compliant_messages,
 			raw_report
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (org_name, report_id, domain) DO NOTHING
+		RETURNING id
 	`,
 		feedback.ReportMetadata.ReportID,
 		feedback.ReportMetadata.OrgName,
@@ -146,27 +150,25 @@ func (s *Storage) SaveReport(feedback *parser.Feedback) error {
 		feedback.GetTotalMessages(),
 		feedback.GetDMARCCompliantCount(),
 		rawReport,
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to insert report: %w", err)
+	).Scan(&reportID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
 	}
-
-	reportID, err := result.LastInsertId()
 	if err != nil {
-		return fmt.Errorf("get last insert ID: %w", err)
-	}
-
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return nil
+		return false, fmt.Errorf("insert report: %w", err)
 	}
 
 	for _, record := range feedback.Records {
-		dkimDomains, _ := json.Marshal(record.AuthResults.DKIM)
-		spfDomains, _ := json.Marshal(record.AuthResults.SPF)
+		dkimDomains, err := json.Marshal(record.AuthResults.DKIM)
+		if err != nil {
+			return false, fmt.Errorf("marshal DKIM results: %w", err)
+		}
+		spfDomains, err := json.Marshal(record.AuthResults.SPF)
+		if err != nil {
+			return false, fmt.Errorf("marshal SPF results: %w", err)
+		}
 
-		_, err := tx.Exec(`
+		if _, err := s.exec(ctx, tx, `
 			INSERT INTO records (
 				report_id, source_ip, count,
 				disposition, dkim_result, spf_result,
@@ -184,26 +186,23 @@ func (s *Storage) SaveReport(feedback *parser.Feedback) error {
 			record.Identifiers.EnvelopeFrom,
 			dkimDomains,
 			spfDomains,
-		)
-
-		if err != nil {
-			return fmt.Errorf("failed to insert record: %w", err)
+		); err != nil {
+			return false, fmt.Errorf("insert record: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+		return false, fmt.Errorf("commit transaction: %w", err)
 	}
-
-	return nil
+	return true, nil
 }
 
 // MaxReportLimit caps the page size GetReports callers may ask for, so one
 // request cannot buffer the whole table into memory.
 const MaxReportLimit = 100
 
-func (s *Storage) GetReports(limit, offset int) ([]ReportSummary, error) {
-	rows, err := s.db.Query(`
+func (s *Storage) GetReports(ctx context.Context, limit, offset int) ([]ReportSummary, error) {
+	rows, err := s.query(ctx, s.db, `
 		SELECT id, report_id, org_name, domain,
 		       date_begin, date_end,
 		       total_messages, compliant_messages,
@@ -238,9 +237,9 @@ func (s *Storage) GetReports(limit, offset int) ([]ReportSummary, error) {
 	return reports, nil
 }
 
-func (s *Storage) GetReportByID(id int64) (*parser.Feedback, error) {
+func (s *Storage) GetReportByID(ctx context.Context, id int64) (*parser.Feedback, error) {
 	var rawReport string
-	err := s.db.QueryRow("SELECT raw_report FROM reports WHERE id = ?", id).Scan(&rawReport)
+	err := s.queryRow(ctx, s.db, "SELECT raw_report FROM reports WHERE id = ?", id).Scan(&rawReport)
 	if err != nil {
 		return nil, fmt.Errorf("query report %d: %w", id, err)
 	}
@@ -253,10 +252,10 @@ func (s *Storage) GetReportByID(id int64) (*parser.Feedback, error) {
 	return &feedback, nil
 }
 
-func (s *Storage) GetStatistics() (*Statistics, error) {
+func (s *Storage) GetStatistics(ctx context.Context) (*Statistics, error) {
 	var stats Statistics
 
-	err := s.db.QueryRow(`
+	err := s.queryRow(ctx, s.db, `
 		SELECT
 			COUNT(*) as total_reports,
 			COALESCE(SUM(total_messages), 0) as total_messages,
@@ -274,7 +273,7 @@ func (s *Storage) GetStatistics() (*Statistics, error) {
 		stats.ComplianceRate = float64(stats.CompliantMessages) / float64(stats.TotalMessages) * 100
 	}
 
-	err = s.db.QueryRow(`
+	err = s.queryRow(ctx, s.db, `
 		SELECT COALESCE(SUM(count), 0)
 		FROM records
 		WHERE disposition IN ('reject', 'quarantine')
@@ -285,12 +284,12 @@ func (s *Storage) GetStatistics() (*Statistics, error) {
 		return nil, fmt.Errorf("query enforced messages: %w", err)
 	}
 
-	err = s.db.QueryRow("SELECT COUNT(DISTINCT source_ip) FROM records").Scan(&stats.UniqueSourceIPs)
+	err = s.queryRow(ctx, s.db, "SELECT COUNT(DISTINCT source_ip) FROM records").Scan(&stats.UniqueSourceIPs)
 	if err != nil {
 		return nil, fmt.Errorf("query unique source IPs: %w", err)
 	}
 
-	err = s.db.QueryRow("SELECT COUNT(DISTINCT domain) FROM reports").Scan(&stats.UniqueDomains)
+	err = s.queryRow(ctx, s.db, "SELECT COUNT(DISTINCT domain) FROM reports").Scan(&stats.UniqueDomains)
 	if err != nil {
 		return nil, fmt.Errorf("query unique domains: %w", err)
 	}
@@ -299,8 +298,8 @@ func (s *Storage) GetStatistics() (*Statistics, error) {
 	return &stats, nil
 }
 
-func (s *Storage) GetTopSourceIPs(limit int) ([]TopSourceIP, error) {
-	rows, err := s.db.Query(`
+func (s *Storage) GetTopSourceIPs(ctx context.Context, limit int) ([]TopSourceIP, error) {
+	rows, err := s.query(ctx, s.db, `
 		SELECT
 			source_ip,
 			SUM(count) as total_count,
@@ -327,10 +326,6 @@ func (s *Storage) GetTopSourceIPs(limit int) ([]TopSourceIP, error) {
 	}
 
 	return results, nil
-}
-
-func (s *Storage) Close() error {
-	return s.db.Close()
 }
 
 // DomainStats holds statistics for a single domain
@@ -360,8 +355,8 @@ type AuthResultStats struct {
 }
 
 // GetDomainStats returns statistics grouped by domain
-func (s *Storage) GetDomainStats() ([]DomainStats, error) {
-	rows, err := s.db.Query(`
+func (s *Storage) GetDomainStats(ctx context.Context) ([]DomainStats, error) {
+	rows, err := s.query(ctx, s.db, `
 		SELECT domain,
 		       COALESCE(SUM(total_messages), 0) as total_messages,
 		       COALESCE(SUM(compliant_messages), 0) as compliant_messages
@@ -388,8 +383,8 @@ func (s *Storage) GetDomainStats() ([]DomainStats, error) {
 }
 
 // GetOrgStats returns statistics grouped by reporting organization
-func (s *Storage) GetOrgStats() ([]OrgStats, error) {
-	rows, err := s.db.Query(`
+func (s *Storage) GetOrgStats(ctx context.Context) ([]OrgStats, error) {
+	rows, err := s.query(ctx, s.db, `
 		SELECT org_name, COUNT(*) as reports
 		FROM reports
 		GROUP BY org_name
@@ -411,8 +406,8 @@ func (s *Storage) GetOrgStats() ([]OrgStats, error) {
 }
 
 // GetDispositionStats returns message counts grouped by disposition
-func (s *Storage) GetDispositionStats() ([]DispositionStats, error) {
-	rows, err := s.db.Query(`
+func (s *Storage) GetDispositionStats(ctx context.Context) ([]DispositionStats, error) {
+	rows, err := s.query(ctx, s.db, `
 		SELECT COALESCE(disposition, 'unknown') as disposition,
 		       SUM(count) as total_count
 		FROM records
@@ -435,8 +430,8 @@ func (s *Storage) GetDispositionStats() ([]DispositionStats, error) {
 }
 
 // GetSPFStats returns SPF authentication result statistics
-func (s *Storage) GetSPFStats() ([]AuthResultStats, error) {
-	rows, err := s.db.Query(`
+func (s *Storage) GetSPFStats(ctx context.Context) ([]AuthResultStats, error) {
+	rows, err := s.query(ctx, s.db, `
 		SELECT COALESCE(spf_result, 'unknown') as result,
 		       SUM(count) as total_count
 		FROM records
@@ -459,8 +454,8 @@ func (s *Storage) GetSPFStats() ([]AuthResultStats, error) {
 }
 
 // GetDKIMStats returns DKIM authentication result statistics
-func (s *Storage) GetDKIMStats() ([]AuthResultStats, error) {
-	rows, err := s.db.Query(`
+func (s *Storage) GetDKIMStats(ctx context.Context) ([]AuthResultStats, error) {
+	rows, err := s.query(ctx, s.db, `
 		SELECT COALESCE(dkim_result, 'unknown') as result,
 		       SUM(count) as total_count
 		FROM records

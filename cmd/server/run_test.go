@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -61,14 +62,14 @@ func TestFetchMaildirReportsDeadlettersUnreadableMessage(t *testing.T) {
 		"4.also-bad": maildirMessage("truncated.gz", "PK not a report"),
 	})
 
-	store, err := storage.NewStorage(filepath.Join(t.TempDir(), "db.sqlite"))
+	store, err := storage.Open(context.Background(), storage.Options{Path: filepath.Join(t.TempDir(), "db.sqlite")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
 
 	cfg := &config.Config{Maildir: config.MaildirConfig{Path: dir, DeadletterMailbox: "DEADLETTER"}}
-	if err := fetchMaildirReports(cfg, store, nil); err != nil {
+	if err := fetchMaildirReports(context.Background(), cfg, store, nil); err != nil {
 		t.Fatal(err)
 	}
 

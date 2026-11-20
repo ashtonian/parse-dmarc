@@ -186,7 +186,7 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	reports, err := s.storage.GetReports(limit, offset)
+	reports, err := s.storage.GetReports(r.Context(), limit, offset)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -210,7 +210,7 @@ func (s *Server) handleReportDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	report, err := s.storage.GetReportByID(id)
+	report, err := s.storage.GetReportByID(r.Context(), id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -226,7 +226,7 @@ func (s *Server) handleStatistics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := s.storage.GetStatistics()
+	stats, err := s.storage.GetStatistics(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -249,7 +249,7 @@ func (s *Server) handleTopSources(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sources, err := s.storage.GetTopSourceIPs(limit)
+	sources, err := s.storage.GetTopSourceIPs(r.Context(), limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -277,13 +277,13 @@ func (s *Server) writeJSON(w http.ResponseWriter, data interface{}) {
 }
 
 // RefreshMetrics updates all Prometheus metrics from current database state
-func (s *Server) RefreshMetrics() {
+func (s *Server) RefreshMetrics(ctx context.Context) {
 	if s.metrics == nil {
 		return
 	}
 
 	// Update basic statistics
-	stats, err := s.storage.GetStatistics()
+	stats, err := s.storage.GetStatistics(ctx)
 	if err != nil {
 		s.log.Error().Err(err).Msg("failed to get statistics for metrics")
 	} else {
@@ -298,7 +298,7 @@ func (s *Server) RefreshMetrics() {
 	}
 
 	// Update per-domain metrics
-	domainStats, err := s.storage.GetDomainStats()
+	domainStats, err := s.storage.GetDomainStats(ctx)
 	if err != nil {
 		s.log.Error().Err(err).Msg("failed to get domain stats for metrics")
 	} else {
@@ -308,7 +308,7 @@ func (s *Server) RefreshMetrics() {
 	}
 
 	// Update per-organization metrics
-	orgStats, err := s.storage.GetOrgStats()
+	orgStats, err := s.storage.GetOrgStats(ctx)
 	if err != nil {
 		s.log.Error().Err(err).Msg("failed to get org stats for metrics")
 	} else {
@@ -318,7 +318,7 @@ func (s *Server) RefreshMetrics() {
 	}
 
 	// Update disposition metrics
-	dispStats, err := s.storage.GetDispositionStats()
+	dispStats, err := s.storage.GetDispositionStats(ctx)
 	if err != nil {
 		s.log.Error().Err(err).Msg("failed to get disposition stats for metrics")
 	} else {
@@ -328,8 +328,8 @@ func (s *Server) RefreshMetrics() {
 	}
 
 	// Update authentication results
-	spfStats, errSpf := s.storage.GetSPFStats()
-	dkimStats, errDkim := s.storage.GetDKIMStats()
+	spfStats, errSpf := s.storage.GetSPFStats(ctx)
+	dkimStats, errDkim := s.storage.GetDKIMStats(ctx)
 	if errSpf != nil {
 		s.log.Error().Err(errSpf).Msg("failed to get SPF stats for metrics")
 	}

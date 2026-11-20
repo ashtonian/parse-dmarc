@@ -91,7 +91,7 @@ type ParsedReportOutput struct {
 // Tool handlers
 
 func (s *Server) getStatistics(ctx context.Context, req *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, StatisticsOutput, error) {
-	stats, err := s.store.GetStatistics()
+	stats, err := s.store.GetStatistics(ctx)
 	if err != nil {
 		return nil, StatisticsOutput{}, fmt.Errorf("failed to get statistics: %w", err)
 	}
@@ -113,7 +113,7 @@ func (s *Server) getReports(ctx context.Context, req *mcp.CallToolRequest, input
 		offset = 0
 	}
 
-	reports, err := s.store.GetReports(limit, offset)
+	reports, err := s.store.GetReports(ctx, limit, offset)
 	if err != nil {
 		return nil, ReportsOutput{}, fmt.Errorf("failed to get reports: %w", err)
 	}
@@ -133,7 +133,7 @@ func (s *Server) getReportByID(ctx context.Context, req *mcp.CallToolRequest, in
 		return nil, ReportOutput{}, fmt.Errorf("invalid report ID: must be a positive integer")
 	}
 
-	report, err := s.store.GetReportByID(input.ID)
+	report, err := s.store.GetReportByID(ctx, input.ID)
 	if err != nil {
 		return nil, ReportOutput{}, fmt.Errorf("failed to get report: %w", err)
 	}
@@ -154,7 +154,7 @@ func (s *Server) getTopSourceIPs(ctx context.Context, req *mcp.CallToolRequest, 
 		limit = 100
 	}
 
-	ips, err := s.store.GetTopSourceIPs(limit)
+	ips, err := s.store.GetTopSourceIPs(ctx, limit)
 	if err != nil {
 		return nil, TopSourceIPsOutput{}, fmt.Errorf("failed to get top source IPs: %w", err)
 	}
@@ -170,7 +170,7 @@ func (s *Server) getTopSourceIPs(ctx context.Context, req *mcp.CallToolRequest, 
 }
 
 func (s *Server) getDomainStats(ctx context.Context, req *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, DomainStatsOutput, error) {
-	stats, err := s.store.GetDomainStats()
+	stats, err := s.store.GetDomainStats(ctx)
 	if err != nil {
 		return nil, DomainStatsOutput{}, fmt.Errorf("failed to get domain stats: %w", err)
 	}
@@ -186,7 +186,7 @@ func (s *Server) getDomainStats(ctx context.Context, req *mcp.CallToolRequest, i
 }
 
 func (s *Server) getOrgStats(ctx context.Context, req *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, OrgStatsOutput, error) {
-	stats, err := s.store.GetOrgStats()
+	stats, err := s.store.GetOrgStats(ctx)
 	if err != nil {
 		return nil, OrgStatsOutput{}, fmt.Errorf("failed to get organization stats: %w", err)
 	}
@@ -202,7 +202,7 @@ func (s *Server) getOrgStats(ctx context.Context, req *mcp.CallToolRequest, inpu
 }
 
 func (s *Server) getSPFStats(ctx context.Context, req *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, AuthResultStatsOutput, error) {
-	stats, err := s.store.GetSPFStats()
+	stats, err := s.store.GetSPFStats(ctx)
 	if err != nil {
 		return nil, AuthResultStatsOutput{}, fmt.Errorf("failed to get SPF stats: %w", err)
 	}
@@ -218,7 +218,7 @@ func (s *Server) getSPFStats(ctx context.Context, req *mcp.CallToolRequest, inpu
 }
 
 func (s *Server) getDKIMStats(ctx context.Context, req *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, AuthResultStatsOutput, error) {
-	stats, err := s.store.GetDKIMStats()
+	stats, err := s.store.GetDKIMStats(ctx)
 	if err != nil {
 		return nil, AuthResultStatsOutput{}, fmt.Errorf("failed to get DKIM stats: %w", err)
 	}

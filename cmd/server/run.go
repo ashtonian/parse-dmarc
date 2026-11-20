@@ -45,15 +45,24 @@ func run(ctx context.Context, version, commit, date string) error {
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cfg.Database.Path), 0o755); err != nil {
-		return fmt.Errorf("create database directory: %w", err)
+	if cfg.Database.URL == "" {
+		if err := os.MkdirAll(filepath.Dir(cfg.Database.Path), 0o755); err != nil {
+			return fmt.Errorf("create database directory: %w", err)
+		}
 	}
 
-	store, err := storage.NewStorage(cfg.Database.Path)
+	store, err := storage.Open(ctx, storage.Options{
+		URL:             cfg.Database.URL,
+		Path:            cfg.Database.Path,
+		MaxOpenConns:    cfg.Database.MaxOpenConns,
+		ConnMaxLifetime: time.Duration(cfg.Database.ConnMaxLifetimeSeconds) * time.Second,
+		ConnMaxIdleTime: time.Duration(cfg.Database.ConnMaxIdleSeconds) * time.Second,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+	log.Info().Str("database", store.Dialect()).Msg("storage ready")
 
 	// Handle MCP mode
 	if mcpMode || mcpHTTPAddr != "" {
@@ -77,7 +86,7 @@ func run(ctx context.Context, version, commit, date string) error {
 	}()
 
 	// Refresh metrics on startup
-	server.RefreshMetrics()
+	server.RefreshMetrics(ctx)
 
 	if serveOnly {
 		log.Info().Msg("running in serve-only mode")
@@ -93,20 +102,20 @@ func run(ctx context.Context, version, commit, date string) error {
 	}
 
 	if fetchOnce {
-		if err := fetchReports(cfg, store, m); err != nil {
+		if err := fetchReports(ctx, cfg, store, m); err != nil {
 			return fmt.Errorf("failed to fetch reports: %w", err)
 		}
-		server.RefreshMetrics()
+		server.RefreshMetrics(ctx)
 		log.Info().Msg("fetch complete")
 		return nil
 	}
 
 	log.Info().Int("interval_seconds", fetchInterval).Msg("starting continuous fetch mode")
 
-	if err := fetchReports(cfg, store, m); err != nil {
+	if err := fetchReports(ctx, cfg, store, m); err != nil {
 		log.Error().Err(err).Msg("initial fetch failed")
 	}
-	server.RefreshMetrics()
+	server.RefreshMetrics(ctx)
 
 	ticker := time.NewTicker(time.Duration(fetchInterval) * time.Second)
 	defer ticker.Stop()
@@ -114,10 +123,10 @@ func run(ctx context.Context, version, commit, date string) error {
 	for {
 		select {
 		case <-ticker.C:
-			if err := fetchReports(cfg, store, m); err != nil {
+			if err := fetchReports(ctx, cfg, store, m); err != nil {
 				log.Error().Err(err).Msg("fetch failed")
 			}
-			server.RefreshMetrics()
+			server.RefreshMetrics(ctx)
 		case <-ctx.Done():
 			log.Info().Msg("shutting down")
 			return nil
@@ -131,14 +140,14 @@ func run(ctx context.Context, version, commit, date string) error {
 
 // fetchReports reads one batch of reports from the source the configuration
 // names: a Maildir when MAILDIR_PATH is set, IMAP otherwise.
-func fetchReports(cfg *config.Config, store *storage.Storage, m *metrics.Metrics) error {
+func fetchReports(ctx context.Context, cfg *config.Config, store *storage.Storage, m *metrics.Metrics) error {
 	if cfg.Maildir.Path != "" {
-		return fetchMaildirReports(cfg, store, m)
+		return fetchMaildirReports(ctx, cfg, store, m)
 	}
-	return fetchIMAPReports(cfg, store, m)
+	return fetchIMAPReports(ctx, cfg, store, m)
 }
 
-func fetchIMAPReports(cfg *config.Config, store *storage.Storage, m *metrics.Metrics) error {
+func fetchIMAPReports(ctx context.Context, cfg *config.Config, store *storage.Storage, m *metrics.Metrics) error {
 	log.Info().Msg("fetching DMARC reports")
 
 	fetchStart := time.Now()
@@ -184,7 +193,7 @@ func fetchIMAPReports(cfg *config.Config, store *storage.Storage, m *metrics.Met
 	}
 
 	log.Info().Int("count", len(result.Reports)).Msg("processing reports")
-	processed, _ := processReports(result.Reports, store, m)
+	processed, _ := processReports(ctx, result.Reports, store, m)
 
 	// Post-processing: mark as seen and/or move messages
 	if len(result.MessageIDs) > 0 {
@@ -215,7 +224,7 @@ func fetchIMAPReports(cfg *config.Config, store *storage.Storage, m *metrics.Met
 
 // fetchMaildirReports reads the messages a MTA delivered into a local Maildir
 // and moves the whole batch to cur/ once it has been through the store.
-func fetchMaildirReports(cfg *config.Config, store *storage.Storage, m *metrics.Metrics) error {
+func fetchMaildirReports(ctx context.Context, cfg *config.Config, store *storage.Storage, m *metrics.Metrics) error {
 	log.Info().Str("path", cfg.Maildir.Path).Msg("fetching DMARC reports from Maildir")
 
 	fetchStart := time.Now()
@@ -246,7 +255,7 @@ func fetchMaildirReports(cfg *config.Config, store *storage.Storage, m *metrics.
 	var failed []uint32
 	if len(result.Reports) > 0 {
 		log.Info().Int("count", len(result.Reports)).Msg("processing reports")
-		processed, failed = processReports(result.Reports, store, m)
+		processed, failed = processReports(ctx, result.Reports, store, m)
 	} else {
 		log.Info().Msg("no new reports found")
 	}
@@ -289,7 +298,7 @@ func fetchMaildirReports(cfg *config.Config, store *storage.Storage, m *metrics.
 // processReports parses and stores the report attachments of one batch. It
 // returns how many reports were saved, and the IDs of the messages that
 // reached the store with nothing, so the caller can flag them to the operator.
-func processReports(reports []imap.Report, store *storage.Storage, m *metrics.Metrics) (int, []uint32) {
+func processReports(ctx context.Context, reports []imap.Report, store *storage.Storage, m *metrics.Metrics) (int, []uint32) {
 	processed := 0
 	var failed []uint32
 	for _, report := range reports {
@@ -316,7 +325,8 @@ func processReports(reports []imap.Report, store *storage.Storage, m *metrics.Me
 				m.ReportsParsed.Inc()
 			}
 
-			if err := store.SaveReport(feedback); err != nil {
+			stored, err := store.SaveReport(ctx, feedback)
+			if err != nil {
 				log.Error().Err(err).
 					Str("report_id", feedback.ReportMetadata.ReportID).
 					Str("message_id", report.MessageID).
@@ -324,6 +334,15 @@ func processReports(reports []imap.Report, store *storage.Storage, m *metrics.Me
 				if m != nil {
 					m.ReportStoreErrors.Inc()
 				}
+				continue
+			}
+			if !stored {
+				log.Info().
+					Str("report_id", feedback.ReportMetadata.ReportID).
+					Str("org", feedback.ReportMetadata.OrgName).
+					Str("domain", feedback.PolicyPublished.Domain).
+					Msg("report already stored")
+				processed++
 				continue
 			}
 			if m != nil {

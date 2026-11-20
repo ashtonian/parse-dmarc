@@ -63,9 +63,16 @@ type MaildirConfig struct {
 	DeadletterMailbox string `json:"deadletter_mailbox" env:"IMAP_DEADLETTER_BOX" envDefault:"DEADLETTER"`
 }
 
-// DatabaseConfig holds database configuration
+// DatabaseConfig holds database configuration. URL selects PostgreSQL and
+// takes precedence over Path, the SQLite file.
 type DatabaseConfig struct {
 	Path string `json:"path" env:"DATABASE_PATH"`
+	URL  string `json:"url" env:"DATABASE_URL"`
+
+	// PostgreSQL connection pool. SQLite always uses one connection.
+	MaxOpenConns           int `json:"max_open_conns" env:"DATABASE_MAX_OPEN_CONNS" envDefault:"4"`
+	ConnMaxLifetimeSeconds int `json:"conn_max_lifetime_seconds" env:"DATABASE_CONN_MAX_LIFETIME_SECONDS" envDefault:"1800"`
+	ConnMaxIdleSeconds     int `json:"conn_max_idle_seconds" env:"DATABASE_CONN_MAX_IDLE_SECONDS" envDefault:"300"`
 }
 
 // DefaultServerHost is the interface the dashboard binds when SERVER_HOST is
@@ -137,7 +144,7 @@ func Load(path string) (*Config, error) {
 	if cfg.Maildir.DeadletterMailbox == "" {
 		cfg.Maildir.DeadletterMailbox = "DEADLETTER"
 	}
-	if cfg.Database.Path == "" {
+	if cfg.Database.URL == "" && cfg.Database.Path == "" {
 		cfg.Database.Path, err = defaultDBPath()
 		if err != nil || ensureDBPathExists(cfg.Database.Path) != nil {
 			cfg.Database.Path, err = fallbackDBPath()
