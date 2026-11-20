@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -34,6 +35,7 @@ type Server struct {
 	addr            string
 	version         VersionInfo
 	shutdownTimeout time.Duration
+	cors            corsPolicy
 }
 
 // DefaultShutdownTimeout bounds how long in-flight requests may finish once
@@ -51,6 +53,13 @@ func WithShutdownTimeout(d time.Duration) Option {
 			s.shutdownTimeout = d
 		}
 	}
+}
+
+// WithCORSAllowedOrigins lets the listed origins (comma-separated, or "*")
+// read the API from another origin, as a dashboard pointed at a remote API
+// endpoint does. Without it the API sends no CORS headers.
+func WithCORSAllowedOrigins(list string) Option {
+	return func(s *Server) { s.cors = parseCORSOrigins(list) }
 }
 
 // NewServer creates a new API server
@@ -179,20 +188,59 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
-// corsMiddleware adds CORS headers
+// corsMiddleware answers cross-origin requests only from the configured
+// origins. The API has no authentication, so a wildcard would let any web
+// page a user opens read the reports of a dashboard their browser can
+// reach, loopback and LAN included.
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
+		origin := r.Header.Get("Origin")
+		if origin == "" || !s.cors.allows(origin) {
+			next.ServeHTTP(w, r)
 			return
 		}
 
+		w.Header().Add("Vary", "Origin")
+		if s.cors.any {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// corsPolicy is the set of origins allowed to read the API cross-origin.
+type corsPolicy struct {
+	any     bool
+	origins map[string]bool
+}
+
+// parseCORSOrigins reads a comma-separated origin list; "*" allows any.
+func parseCORSOrigins(list string) corsPolicy {
+	p := corsPolicy{origins: map[string]bool{}}
+	for _, o := range strings.Split(list, ",") {
+		o = strings.TrimRight(strings.TrimSpace(o), "/")
+		switch o {
+		case "":
+		case "*":
+			p.any = true
+		default:
+			p.origins[strings.ToLower(o)] = true
+		}
+	}
+	return p
+}
+
+func (p corsPolicy) allows(origin string) bool {
+	return p.any || p.origins[strings.ToLower(origin)]
 }
 
 // handleReports returns a list of reports

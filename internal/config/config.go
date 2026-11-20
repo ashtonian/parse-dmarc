@@ -122,6 +122,9 @@ const DefaultServerHost = "127.0.0.1"
 
 // ServerConfig holds web server configuration
 type ServerConfig struct {
+	// CORSAllowedOrigins lists the origins (comma-separated, or "*") that may
+	// read the API from another origin. Empty sends no CORS headers.
+	CORSAllowedOrigins string `json:"cors_allowed_origins" env:"CORS_ALLOWED_ORIGINS"`
 	// ShutdownTimeoutSeconds bounds how long in-flight requests may finish
 	// once the process is asked to stop.
 	ShutdownTimeoutSeconds int `json:"shutdown_timeout_seconds" env:"SHUTDOWN_TIMEOUT_SECONDS" envDefault:"10"`

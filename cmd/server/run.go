@@ -85,7 +85,8 @@ func run(ctx context.Context, version, commit, date string) error {
 
 	server := api.NewServer(store, cfg.Server.Host, cfg.Server.Port, m, log,
 		api.VersionInfo{Version: version, Commit: commit, Date: date},
-		api.WithShutdownTimeout(time.Duration(cfg.Server.ShutdownTimeoutSeconds)*time.Second))
+		api.WithShutdownTimeout(time.Duration(cfg.Server.ShutdownTimeoutSeconds)*time.Second),
+		api.WithCORSAllowedOrigins(cfg.Server.CORSAllowedOrigins))
 	serverErrChan := make(chan error, 1)
 	go func() {
 		serverErrChan <- server.Start(ctx)
