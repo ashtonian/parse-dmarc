@@ -1,6 +1,6 @@
 # Prometheus metrics and Grafana
 
-Parse DMARC exposes Prometheus metrics at `/metrics` (on by default, `--metrics=false` turns it off) and ships a Grafana dashboard in `grafana/dashboard.json`. This page is the full catalogue plus scrape, alert and provisioning examples. The README has the summary.
+Parse DMARC exposes Prometheus metrics at `/metrics` (on by default, `--metrics=false` turns it off) and ships two Grafana dashboards: `grafana/dashboard.json` on these metrics, and `grafana/dashboard-postgres.json`, a drill-down on the PostgreSQL tables for a `DATABASE_URL` deployment. This page is the full catalogue plus scrape, alert and provisioning examples. The README has the summary.
 
 ## Available metrics
 
