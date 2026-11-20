@@ -53,6 +53,26 @@ Parse DMARC exposes Prometheus metrics at `/metrics` (on by default, `--metrics=
 | `parse_dmarc_dmarc_reports_by_org`            | Gauge | org_name    | Reports per organization     |
 | `parse_dmarc_dmarc_messages_by_disposition`   | Gauge | disposition | Messages by disposition type |
 
+### Domain posture
+
+Read from the store at each refresh, so they survive a restart. Timestamps are the end of the report period in Unix seconds, `0` for never. Domain and reporter labels come from report content, which anyone who can mail the report address controls: past 100 values the smallest are summed under `other`.
+
+| Metric                                                     | Type  | Labels        | Description                                                                                                                  |
+| ---------------------------------------------------------- | ----- | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `parse_dmarc_dmarc_messages_by_class`                      | Gauge | domain, class | Messages by class: `pass` (aligned), `unaligned` (SPF or DKIM passed for another domain), `unauthenticated` (nothing passed) |
+| `parse_dmarc_dmarc_last_report_timestamp_seconds`          | Gauge | domain        | End of the newest DMARC report for the domain                                                                                |
+| `parse_dmarc_dmarc_last_unaligned_timestamp_seconds`       | Gauge | domain        | End of the newest report with an unaligned record                                                                            |
+| `parse_dmarc_dmarc_last_unauthenticated_timestamp_seconds` | Gauge | domain        | End of the newest report with an unauthenticated record                                                                      |
+
+### TLS-RPT
+
+| Metric                                              | Type  | Labels         | Description                                                                                                        |
+| --------------------------------------------------- | ----- | -------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `parse_dmarc_tlsrpt_sessions`                       | Gauge | domain, result | TLS sessions reported per policy domain: `successful` or `failed`                                                  |
+| `parse_dmarc_tlsrpt_last_report_timestamp_seconds`  | Gauge | domain         | End of the newest TLS-RPT report covering the policy domain                                                        |
+| `parse_dmarc_tlsrpt_last_failure_timestamp_seconds` | Gauge | domain         | End of the newest report with a failed session for the domain                                                      |
+| `parse_dmarc_tlsrpt_failed_sessions_by_type`        | Gauge | result_type    | Failed sessions by RFC 8460 result type (`certificate-expired`, `sts-policy-fetch-error`, ...); others are `other` |
+
 ### Authentication Results
 
 | Metric                           | Type  | Labels | Description                       |
@@ -267,6 +287,67 @@ groups:
         annotations:
           summary: "No recent DMARC report fetch"
           description: "Last fetch was {{ humanizeDuration $value }} ago"
+
+      # A sender passes SPF or DKIM, but not for your domain: a service
+      # sending on your behalf without alignment, or a forwarder. These are
+      # the records to fix before p=quarantine or p=reject.
+      - alert: DMARCUnalignedSender
+        expr: |
+          parse_dmarc_dmarc_last_unaligned_timestamp_seconds > 0
+          and time() - parse_dmarc_dmarc_last_unaligned_timestamp_seconds < 2 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unaligned mail for {{ $labels.domain }}"
+          description: "A report ending {{ $value | humanizeTimestamp }} counts mail that passed SPF or DKIM for another domain"
+
+      # Reports usually arrive daily from every large receiver your mail
+      # reaches. Silence means the rua address, the mail filter or the
+      # intake broke; or the domain sent no mail.
+      - alert: DMARCReportsMissing
+        expr: time() - parse_dmarc_dmarc_last_report_timestamp_seconds > 3 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "No DMARC report for {{ $labels.domain }} in 3 days"
+
+      # Days without an unaligned record: the evidence for tightening the
+      # policy, for example 14 days before moving to p=quarantine.
+      - alert: DMARCReadyForStricterPolicy
+        expr: |
+          (time() - parse_dmarc_dmarc_last_unaligned_timestamp_seconds > 14 * 86400)
+          and (time() - parse_dmarc_dmarc_last_report_timestamp_seconds < 2 * 86400)
+        labels:
+          severity: info
+        annotations:
+          summary: "{{ $labels.domain }} has had 14 days of aligned mail"
+
+      # A sending MTA could not deliver over TLS under your MTA-STS or DANE
+      # policy: an expired certificate, a policy it could not fetch, an MX
+      # outside the policy.
+      - alert: TLSRPTFailures
+        expr: |
+          parse_dmarc_tlsrpt_last_failure_timestamp_seconds > 0
+          and time() - parse_dmarc_tlsrpt_last_failure_timestamp_seconds < 2 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS delivery failures to {{ $labels.domain }}"
+
+      - alert: DMARCReportParseErrors
+        expr: increase(parse_dmarc_reports_parse_errors_total[1d]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Report attachments that do not parse"
+          description: 'The log line "failed to parse report" names the message'
+
+      - alert: DMARCArchiveErrors
+        expr: increase(parse_dmarc_reports_archive_errors_total[1h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "The S3 archive refuses reports; their mail is retried every fetch"
 ```
 
 ## Docker Compose with Prometheus and Grafana

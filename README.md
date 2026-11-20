@@ -42,7 +42,7 @@ When your DMARC record carries a `rua=` address, mail receivers such as Google, 
 - Stores everything in one SQLite file. No database server, no JVM.
 - Shows pass rate, message volume and top sending sources, and opens any report down to its raw records.
 - Generates your `_dmarc` TXT record from a form.
-- Exposes 28 Prometheus metrics and ships a Grafana dashboard.
+- Exposes 37 Prometheus metrics, including per-domain freshness and failure timestamps to alert on, and ships a Grafana dashboard.
 - Serves an MCP server, so an AI assistant can query your reports.
 - Dark mode. One static binary in a minimal container image.
 
@@ -212,7 +212,7 @@ JMAP (RFC 8620, RFC 8621) replaces IMAP for providers that offer it with scoped 
 
 ## Metrics, Grafana and MCP
 
-`/metrics` is on by default: 28 metrics covering fetch cycles, IMAP connections, parse and store errors, compliance rate overall and per domain, SPF and DKIM result counts, and HTTP latency. `grafana/dashboard.json` is a ready dashboard for them. The full list, a Prometheus Operator `ServiceMonitor`, alert rules and a compose stack with Prometheus and Grafana are in [docs/METRICS.md](docs/METRICS.md).
+`/metrics` is on by default: 37 metrics covering fetch cycles, IMAP connections, parse, store and archive errors, compliance rate overall and per domain, messages per domain by class, the newest report and the newest unaligned or unauthenticated record per domain, TLS-RPT sessions and failure types, SPF and DKIM result counts, and HTTP latency. `grafana/dashboard.json` is a ready dashboard for them. The full list, a Prometheus Operator `ServiceMonitor`, alert rules and a compose stack with Prometheus and Grafana are in [docs/METRICS.md](docs/METRICS.md).
 
 `parse-dmarc --mcp` exposes the same data to an AI assistant over the Model Context Protocol: thirteen tools, from `get_statistics` to `parse_tlsrpt_report`, over stdio or HTTP with optional OAuth2. Setup and the tool list are in [docs/MCP.md](docs/MCP.md).
 

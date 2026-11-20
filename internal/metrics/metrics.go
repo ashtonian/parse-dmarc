@@ -38,23 +38,8 @@ type Metrics struct {
 	IMAPConnectionsTotal   *prometheus.CounterVec
 	IMAPConnectionDuration prometheus.Histogram
 
-	// DMARC statistics (gauges that reflect current state)
-	TotalReports      prometheus.Gauge
-	TotalMessages     prometheus.Gauge
-	CompliantMessages prometheus.Gauge
-	ComplianceRate    prometheus.Gauge
-	UniqueSourceIPs   prometheus.Gauge
-	UniqueDomains     prometheus.Gauge
-
-	// Per-domain metrics
-	MessagesByDomain      *prometheus.GaugeVec
-	ComplianceByDomain    *prometheus.GaugeVec
-	ReportsByOrg          *prometheus.GaugeVec
-	MessagesByDisposition *prometheus.GaugeVec
-
-	// Authentication results
-	SPFResults  *prometheus.GaugeVec
-	DKIMResults *prometheus.GaugeVec
+	// Report statistics, from the store at each refresh.
+	snapshot *snapshotCollector
 
 	// HTTP server metrics
 	HTTPRequestsTotal    *prometheus.CounterVec
@@ -189,113 +174,7 @@ func New(version, commit, buildDate string) *Metrics {
 			},
 		),
 
-		// DMARC statistics (current state)
-		TotalReports: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "reports_total",
-				Help:      "Total number of DMARC reports in database",
-			},
-		),
-		TotalMessages: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "messages_total",
-				Help:      "Total number of messages across all DMARC reports",
-			},
-		),
-		CompliantMessages: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "compliant_messages_total",
-				Help:      "Total number of DMARC-compliant messages",
-			},
-		),
-		ComplianceRate: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "compliance_rate",
-				Help:      "Overall DMARC compliance rate (0-100)",
-			},
-		),
-		UniqueSourceIPs: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "unique_source_ips",
-				Help:      "Number of unique source IP addresses",
-			},
-		),
-		UniqueDomains: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "unique_domains",
-				Help:      "Number of unique domains",
-			},
-		),
-
-		// Per-domain metrics
-		MessagesByDomain: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "messages_by_domain",
-				Help:      "Number of messages per domain",
-			},
-			[]string{"domain"},
-		),
-		ComplianceByDomain: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "compliance_rate_by_domain",
-				Help:      "DMARC compliance rate per domain (0-100)",
-			},
-			[]string{"domain"},
-		),
-		ReportsByOrg: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "reports_by_org",
-				Help:      "Number of reports per reporting organization",
-			},
-			[]string{"org_name"},
-		),
-		MessagesByDisposition: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "messages_by_disposition",
-				Help:      "Number of messages per disposition type",
-			},
-			[]string{"disposition"}, // none, quarantine, reject
-		),
-
-		// Authentication results
-		SPFResults: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "spf_results",
-				Help:      "Count of SPF authentication results",
-			},
-			[]string{"result"}, // pass, fail, neutral, etc.
-		),
-		DKIMResults: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Subsystem: "dmarc",
-				Name:      "dkim_results",
-				Help:      "Count of DKIM authentication results",
-			},
-			[]string{"result"}, // pass, fail, neutral, etc.
-		),
+		snapshot: newSnapshotCollector(),
 
 		// HTTP server
 		HTTPRequestsTotal: prometheus.NewCounterVec(
@@ -353,23 +232,8 @@ func New(version, commit, buildDate string) *Metrics {
 		m.IMAPConnectionsTotal,
 		m.IMAPConnectionDuration,
 
-		// DMARC statistics
-		m.TotalReports,
-		m.TotalMessages,
-		m.CompliantMessages,
-		m.ComplianceRate,
-		m.UniqueSourceIPs,
-		m.UniqueDomains,
-
-		// Per-domain
-		m.MessagesByDomain,
-		m.ComplianceByDomain,
-		m.ReportsByOrg,
-		m.MessagesByDisposition,
-
-		// Authentication
-		m.SPFResults,
-		m.DKIMResults,
+		// Report statistics
+		m.snapshot,
 
 		// HTTP
 		m.HTTPRequestsTotal,
@@ -495,40 +359,12 @@ func (m *Metrics) RecordIMAPConnection(success bool, duration time.Duration) {
 	m.IMAPConnectionDuration.Observe(duration.Seconds())
 }
 
-// UpdateStatistics updates the DMARC statistics gauges
-func (m *Metrics) UpdateStatistics(totalReports, totalMessages, compliantMessages, uniqueIPs, uniqueDomains int, complianceRate float64) {
-	m.TotalReports.Set(float64(totalReports))
-	m.TotalMessages.Set(float64(totalMessages))
-	m.CompliantMessages.Set(float64(compliantMessages))
-	m.ComplianceRate.Set(complianceRate)
-	m.UniqueSourceIPs.Set(float64(uniqueIPs))
-	m.UniqueDomains.Set(float64(uniqueDomains))
-}
-
-// UpdateDomainMetrics updates per-domain metrics
-func (m *Metrics) UpdateDomainMetrics(domain string, messages int, complianceRate float64) {
-	m.MessagesByDomain.WithLabelValues(domain).Set(float64(messages))
-	m.ComplianceByDomain.WithLabelValues(domain).Set(complianceRate)
-}
-
-// UpdateOrgMetrics updates per-organization metrics
-func (m *Metrics) UpdateOrgMetrics(orgName string, reports int) {
-	m.ReportsByOrg.WithLabelValues(orgName).Set(float64(reports))
-}
-
-// UpdateDispositionMetrics updates disposition counts
-func (m *Metrics) UpdateDispositionMetrics(disposition string, count int) {
-	m.MessagesByDisposition.WithLabelValues(disposition).Set(float64(count))
-}
-
-// UpdateAuthResults updates SPF and DKIM result counts
-func (m *Metrics) UpdateAuthResults(spfResults, dkimResults map[string]int) {
-	for result, count := range spfResults {
-		m.SPFResults.WithLabelValues(result).Set(float64(count))
+// SetSnapshot replaces the report statistics the metrics endpoint serves.
+func (m *Metrics) SetSnapshot(snap Snapshot) {
+	if m == nil {
+		return
 	}
-	for result, count := range dkimResults {
-		m.DKIMResults.WithLabelValues(result).Set(float64(count))
-	}
+	m.snapshot.set(snap)
 }
 
 // HTTPMiddleware wraps an HTTP handler with metrics instrumentation

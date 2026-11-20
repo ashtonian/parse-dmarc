@@ -62,8 +62,10 @@ type TLSDomainStats struct {
 	PolicyDomain       string `json:"policy_domain"`
 	SuccessfulSessions int64  `json:"successful_sessions"`
 	FailedSessions     int64  `json:"failed_sessions"`
-	// LastReport is the end of the newest report covering the domain.
-	LastReport int64 `json:"last_report"`
+	// LastReport is the end of the newest report covering the domain, and
+	// LastFailure of the newest with a failed session for it, 0 for none.
+	LastReport  int64 `json:"last_report"`
+	LastFailure int64 `json:"last_failure"`
 }
 
 // TLSFailureTypeStats is the failed sessions of one result type.
@@ -242,7 +244,8 @@ func (s *Storage) GetTLSStatistics(ctx context.Context) (*TLSStatistics, error) 
 		SELECT p.policy_domain,
 		       COALESCE(SUM(p.successful_sessions), 0),
 		       COALESCE(SUM(p.failed_sessions), 0),
-		       MAX(r.date_end)
+		       MAX(r.date_end),
+		       COALESCE(MAX(CASE WHEN p.failed_sessions > 0 THEN r.date_end END), 0)
 		FROM tlsrpt_policies p JOIN tlsrpt_reports r ON r.id = p.report_id
 		GROUP BY p.policy_domain
 		ORDER BY p.policy_domain`)
@@ -251,7 +254,7 @@ func (s *Storage) GetTLSStatistics(ctx context.Context) (*TLSStatistics, error) 
 	}
 	for rows.Next() {
 		var d TLSDomainStats
-		if err := rows.Scan(&d.PolicyDomain, &d.SuccessfulSessions, &d.FailedSessions, &d.LastReport); err != nil {
+		if err := rows.Scan(&d.PolicyDomain, &d.SuccessfulSessions, &d.FailedSessions, &d.LastReport, &d.LastFailure); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan TLS domain: %w", err)
 		}

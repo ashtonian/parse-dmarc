@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/dmarcguardhq/parse-dmarc/internal/metrics"
+	"github.com/dmarcguardhq/parse-dmarc/internal/parser"
 	"github.com/dmarcguardhq/parse-dmarc/internal/storage"
 )
 
@@ -359,77 +361,114 @@ func (s *Server) writeJSON(w http.ResponseWriter, data interface{}) {
 	}
 }
 
-// RefreshMetrics updates all Prometheus metrics from current database state
+// RefreshMetrics replaces the report statistics /metrics serves with the
+// store's current state. A query that fails keeps the previous statistics
+// in place rather than serving a partial set.
 func (s *Server) RefreshMetrics(ctx context.Context) {
 	if s.metrics == nil {
 		return
 	}
+	snap, err := s.snapshot(ctx)
+	if err != nil {
+		s.log.Error().Err(err).Msg("failed to refresh report metrics")
+		return
+	}
+	s.metrics.SetSnapshot(snap)
+}
 
-	// Update basic statistics
+func (s *Server) snapshot(ctx context.Context) (metrics.Snapshot, error) {
+	var snap metrics.Snapshot
+
 	stats, err := s.storage.GetStatistics(ctx)
 	if err != nil {
-		s.log.Error().Err(err).Msg("failed to get statistics for metrics")
-	} else {
-		s.metrics.UpdateStatistics(
-			stats.TotalReports,
-			stats.TotalMessages,
-			stats.CompliantMessages,
-			stats.UniqueSourceIPs,
-			stats.UniqueDomains,
-			stats.ComplianceRate,
-		)
+		return snap, err
 	}
+	snap.TotalReports = stats.TotalReports
+	snap.TotalMessages = stats.TotalMessages
+	snap.CompliantMessages = stats.CompliantMessages
+	snap.ComplianceRate = stats.ComplianceRate
+	snap.UniqueSourceIPs = stats.UniqueSourceIPs
+	snap.UniqueDomains = stats.UniqueDomains
 
-	// Update per-domain metrics
-	domainStats, err := s.storage.GetDomainStats(ctx)
+	domains, err := s.storage.GetDomainStats(ctx)
 	if err != nil {
-		s.log.Error().Err(err).Msg("failed to get domain stats for metrics")
-	} else {
-		for _, ds := range domainStats {
-			s.metrics.UpdateDomainMetrics(ds.Domain, ds.TotalMessages, ds.ComplianceRate)
-		}
+		return snap, err
+	}
+	for _, d := range domains {
+		snap.Domains = append(snap.Domains, metrics.DomainSnapshot{
+			Domain:                  d.Domain,
+			Messages:                d.TotalMessages,
+			CompliantMessages:       d.CompliantMessages,
+			UnalignedMessages:       d.UnalignedMessages,
+			UnauthenticatedMessages: d.UnauthenticatedMessages,
+			LastReport:              d.LastReport,
+			LastUnaligned:           d.LastUnaligned,
+			LastUnauthenticated:     d.LastUnauthenticated,
+		})
 	}
 
-	// Update per-organization metrics
-	orgStats, err := s.storage.GetOrgStats(ctx)
+	orgs, err := s.storage.GetOrgStats(ctx)
 	if err != nil {
-		s.log.Error().Err(err).Msg("failed to get org stats for metrics")
-	} else {
-		for _, os := range orgStats {
-			s.metrics.UpdateOrgMetrics(os.OrgName, os.Reports)
-		}
+		return snap, err
+	}
+	snap.Orgs = make(map[string]int, len(orgs))
+	for _, o := range orgs {
+		snap.Orgs[o.OrgName] += o.Reports
 	}
 
-	// Update disposition metrics
-	dispStats, err := s.storage.GetDispositionStats(ctx)
+	disp, err := s.storage.GetDispositionStats(ctx)
 	if err != nil {
-		s.log.Error().Err(err).Msg("failed to get disposition stats for metrics")
-	} else {
-		for _, ds := range dispStats {
-			s.metrics.UpdateDispositionMetrics(ds.Disposition, ds.Count)
-		}
+		return snap, err
+	}
+	snap.Dispositions = make(map[string]int, len(disp))
+	for _, d := range disp {
+		snap.Dispositions[d.Disposition] += d.Count
 	}
 
-	// Update authentication results
-	spfStats, errSpf := s.storage.GetSPFStats(ctx)
-	dkimStats, errDkim := s.storage.GetDKIMStats(ctx)
-	if errSpf != nil {
-		s.log.Error().Err(errSpf).Msg("failed to get SPF stats for metrics")
+	spf, err := s.storage.GetSPFStats(ctx)
+	if err != nil {
+		return snap, err
 	}
-	if errDkim != nil {
-		s.log.Error().Err(errDkim).Msg("failed to get DKIM stats for metrics")
+	snap.SPFResults = make(map[string]int, len(spf))
+	for _, r := range spf {
+		snap.SPFResults[r.Result] += r.Count
 	}
-	if errSpf == nil && errDkim == nil {
-		spfResults := make(map[string]int)
-		for _, s := range spfStats {
-			spfResults[s.Result] = s.Count
-		}
-		dkimResults := make(map[string]int)
-		for _, d := range dkimStats {
-			dkimResults[d.Result] = d.Count
-		}
-		s.metrics.UpdateAuthResults(spfResults, dkimResults)
+	dkim, err := s.storage.GetDKIMStats(ctx)
+	if err != nil {
+		return snap, err
 	}
+	snap.DKIMResults = make(map[string]int, len(dkim))
+	for _, r := range dkim {
+		snap.DKIMResults[r.Result] += r.Count
+	}
+
+	tls, err := s.storage.GetTLSStatistics(ctx)
+	if err != nil {
+		return snap, err
+	}
+	for _, d := range tls.Domains {
+		snap.TLSDomains = append(snap.TLSDomains, metrics.TLSDomainSnapshot{
+			Domain:      d.PolicyDomain,
+			Successful:  d.SuccessfulSessions,
+			Failed:      d.FailedSessions,
+			LastReport:  d.LastReport,
+			LastFailure: d.LastFailure,
+		})
+	}
+	snap.TLSFailureTypes = map[string]int64{}
+	for _, f := range tls.FailureTypes {
+		snap.TLSFailureTypes[knownTLSResultType(f.ResultType)] += f.FailedSessions
+	}
+	return snap, nil
+}
+
+// knownTLSResultType keeps a result type RFC 8460 defines and folds any
+// other, which a reporter or a forged report may send, into "other".
+func knownTLSResultType(t string) string {
+	if slices.Contains(parser.TLSResultTypes, t) {
+		return t
+	}
+	return metrics.OtherLabel
 }
 
 // GetMetrics returns the metrics instance
