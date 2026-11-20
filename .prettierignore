@@ -1,5 +1,5 @@
 renovate.json
 CHANGELOG.md
-grafana/dashboard.json
+grafana/*.json
 deploy
 .github/release-notes.md

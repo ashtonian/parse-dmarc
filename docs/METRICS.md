@@ -146,20 +146,23 @@ spec:
 
 ## Grafana dashboard
 
-A production-ready Grafana dashboard is included in `grafana/dashboard.json`.
+Two dashboards ship in `grafana/`, tagged `parse-dmarc` and linked to each other:
+
+- `grafana/dashboard.json` reads the Prometheus metrics above.
+- `grafana/dashboard-postgres.json` reads the reports from the PostgreSQL database for drill-down: senders, published policies, reporters and TLS-RPT failure details. See [PostgreSQL dashboard](#postgresql-dashboard).
 
 ### Import Manually
 
 1. In Grafana, go to **Dashboards** > **Import**
-2. Upload `grafana/dashboard.json` or paste its contents
-3. Select your Prometheus datasource
-4. Click **Import**
+2. Upload `grafana/dashboard.json` (or `grafana/dashboard-postgres.json`) or paste its contents
+3. Click **Import**
+4. Pick the data source in the dashboard's `datasource` variable: Prometheus for `dashboard.json`, PostgreSQL for `dashboard-postgres.json`
 
 ### Provision Automatically (Recommended for Production)
 
 ```bash
-# Copy dashboard to Grafana dashboards directory
-cp grafana/dashboard.json /var/lib/grafana/dashboards/parse-dmarc/
+# Copy the dashboards to Grafana dashboards directory
+cp grafana/dashboard.json grafana/dashboard-postgres.json /var/lib/grafana/dashboards/parse-dmarc/
 
 # Copy provisioning config
 cp grafana/provisioning.yaml /etc/grafana/provisioning/dashboards/parse-dmarc.yaml
@@ -170,24 +173,74 @@ systemctl restart grafana-server
 
 ### Dashboard Variables
 
-| Variable     | Purpose                        |
-| ------------ | ------------------------------ |
-| `datasource` | Prometheus datasource to query |
-| `job`        | Filter by Prometheus job label |
-| `instance`   | Filter by instance(s)          |
-| `domain`     | Filter by monitored domain(s)  |
+| Variable     | Purpose                                                          |
+| ------------ | ---------------------------------------------------------------- |
+| `datasource` | Prometheus datasource to query                                   |
+| `job`        | Filter by Prometheus job label                                   |
+| `instance`   | Filter by instance(s)                                            |
+| `domain`     | Filter by domain(s), DMARC policy domains and TLS-RPT ones alike |
 
 ### Dashboard Sections
 
-| Section                            | What It Shows                                                             |
-| ---------------------------------- | ------------------------------------------------------------------------- |
-| **Overview - Golden Signals**      | Compliance rate, total messages, reports count, time since last fetch     |
-| **DMARC Authentication Results**   | SPF/DKIM pass rates, disposition breakdown, per-domain compliance         |
-| **Report Sources & Organizations** | Top reporting organizations (Google, Microsoft, etc.), messages by domain |
-| **IMAP & Fetch Operations**        | Connection health, fetch cycle monitoring, latency heatmaps               |
-| **Error Tracking**                 | Parse errors, storage errors, fetch failures                              |
-| **HTTP Server**                    | Request rates, latency percentiles, error rates                           |
-| **Go Runtime**                     | Goroutines, memory usage, GC stats, CPU usage                             |
+| Section                            | What It Shows                                                                                                                                                                  |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Overview - Golden Signals**      | Compliance rate, total messages, reports count, time since last fetch                                                                                                          |
+| **DMARC Authentication Results**   | SPF/DKIM pass rates, disposition breakdown, per-domain compliance                                                                                                              |
+| **Report Sources & Organizations** | Top reporting organizations (Google, Microsoft, etc.), messages by domain                                                                                                      |
+| **Domain Posture**                 | Per domain: time since the last report, days since the last unaligned and the last unauthenticated record (`never` when there was none), messages by class                     |
+| **TLS-RPT**                        | TLS sessions per policy domain, failed sessions by result type, time since the last TLS-RPT report and the last failed session per policy domain (`never` when there was none) |
+| **IMAP & Fetch Operations**        | Connection health, fetch cycle monitoring, latency heatmaps                                                                                                                    |
+| **Error Tracking**                 | Parse errors, storage errors, S3 archive errors, fetch failures                                                                                                                |
+| **HTTP Server**                    | Request rates, latency percentiles, error rates                                                                                                                                |
+| **Go Runtime**                     | Goroutines, memory usage, GC stats, CPU usage                                                                                                                                  |
+
+The days since the last unaligned record turn green at 14, the wait the `DMARCReadyForStricterPolicy` alert below uses; within 2 days they are red, as the `DMARCUnalignedSender` alert fires.
+
+### PostgreSQL dashboard
+
+`grafana/dashboard-postgres.json` queries the store through Grafana's built-in PostgreSQL data source (plugin `grafana-postgresql-datasource`), so Parse DMARC has to store its reports in PostgreSQL (`DATABASE_URL`); Grafana cannot read the SQLite file. A role that can read the tables the dashboard queries is enough:
+
+```sql
+CREATE ROLE grafana_reader LOGIN PASSWORD 'change-me';
+GRANT CONNECT ON DATABASE dmarc TO grafana_reader;
+GRANT USAGE ON SCHEMA public TO grafana_reader;
+GRANT SELECT ON reports, records, sources, tlsrpt_reports, tlsrpt_policies, tlsrpt_failures TO grafana_reader;
+-- Optional: keep a slow panel query from holding the database Parse DMARC writes to
+ALTER ROLE grafana_reader SET statement_timeout = '30s';
+```
+
+Use the database name and schema `DATABASE_URL` points at in place of `dmarc` and `public`. Then add the data source, for example by provisioning:
+
+```yaml
+apiVersion: 1
+datasources:
+  - name: Parse DMARC
+    type: grafana-postgresql-datasource
+    url: db.example.com:5432
+    user: grafana_reader
+    jsonData:
+      database: dmarc
+      sslmode: verify-full
+    secureJsonData:
+      password: change-me
+```
+
+| Variable     | Purpose                                                                         |
+| ------------ | ------------------------------------------------------------------------------- |
+| `datasource` | PostgreSQL data source to query                                                 |
+| `domain`     | Filter by domain(s): every DMARC policy domain and TLS-RPT policy domain stored |
+
+The dashboard shows UTC. A report counts at the start of the period it covers (`date_begin`): the time series group by UTC day, and every panel takes the reports that begin in the time range, except **Last Report per Domain**, which covers every stored report as the posture metrics do.
+
+| Section                  | What It Shows                                                                                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Overview**             | Reports, messages, pass rate, unaligned and unauthenticated messages; per domain the newest DMARC report, unaligned record, unauthenticated record, TLS-RPT report and TLS failure (`never` for none)  |
+| **DMARC**                | Messages per day by class, stacked; DMARC pass rate per domain per day                                                                                                                                 |
+| **Senders**              | The top 50 unaligned senders with the domains SPF and DKIM passed for, the top 50 unauthenticated sources with the dispositions applied; each with the service, forward-confirmed PTR, ASN and country |
+| **Policy and Reporters** | Each published policy (`p`, `sp`, `np`, `adkim`, `aspf`, `pct`, `testing`) with the first and last report that carried it, dispositions by class, policy override reasons, reporters                   |
+| **TLS-RPT**              | Sessions per policy domain per day, failed sessions by result type, failure details: result type, receiving MX and IP, sending MTA, reason code                                                        |
+
+The service, PTR, ASN and country columns are filled in by source enrichment (`ENRICH_*` in the README) and stay empty for addresses it has not looked up.
 
 ### Example Grafana Panels
 
@@ -242,6 +295,13 @@ histogram_quantile(0.95, rate(parse_dmarc_http_request_duration_seconds_bucket[5
 
 ```promql
 topk(10, parse_dmarc_dmarc_reports_by_org)
+```
+
+**Days Since the Last Unaligned Record (`-1` for never, which the dashboard maps to "never"):**
+
+```promql
+((time() - (parse_dmarc_dmarc_last_unaligned_timestamp_seconds > 0)) / 86400)
+or ((parse_dmarc_dmarc_last_unaligned_timestamp_seconds == 0) - 1)
 ```
 
 ### Alerting Rules

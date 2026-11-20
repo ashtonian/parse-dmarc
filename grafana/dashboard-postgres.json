@@ -1,0 +1,1885 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Parse DMARC reports read from its PostgreSQL database: senders, policies, reporters and TLS-RPT failure details",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Parse DMARC GitHub",
+      "tooltip": "View project on GitHub",
+      "type": "link",
+      "url": "https://github.com/dmarcguardhq/parse-dmarc"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [
+        "parse-dmarc"
+      ],
+      "targetBlank": false,
+      "title": "Parse DMARC dashboards",
+      "type": "dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": [],
+      "title": "Overview",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Reports that begin in the time range, and the messages they count by class",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pass rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 70
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 85
+                    },
+                    {
+                      "color": "green",
+                      "value": 95
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Unaligned"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Unauthenticated"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT rep.reports AS \"Reports\",\n       rep.messages AS \"Messages\",\n       rep.pass_rate AS \"Pass rate\",\n       c.unaligned AS \"Unaligned\",\n       c.unauthenticated AS \"Unauthenticated\"\nFROM (\n  SELECT COUNT(*) AS reports,\n         COALESCE(SUM(r.total_messages), 0) AS messages,\n         100.0 * SUM(r.compliant_messages) / NULLIF(SUM(r.total_messages), 0) AS pass_rate\n  FROM reports r\n  WHERE $__unixEpochFilter(r.date_begin)\n    AND r.domain = ANY(ARRAY[$domain]::text[])\n) rep, (\n  SELECT COALESCE(SUM(rec.count) FILTER (WHERE rec.auth_class = 'unaligned'), 0) AS unaligned,\n         COALESCE(SUM(rec.count) FILTER (WHERE rec.auth_class = 'unauthenticated'), 0) AS unauthenticated\n  FROM reports r\n  JOIN records rec ON rec.report_id = r.id\n  WHERE $__unixEpochFilter(r.date_begin)\n    AND r.domain = ANY(ARRAY[$domain]::text[])\n) c",
+          "refId": "A"
+        }
+      ],
+      "title": "Summary",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "The end of the newest report per domain over all stored reports, as the posture metrics count it: the time range does not apply. Unaligned: SPF or DKIM passed for another domain. Unauthenticated: nothing passed.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byType",
+              "options": "time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeFromNow"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "DMARC report"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "index": 0,
+                        "text": "never"
+                      }
+                    },
+                    "type": "special"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Unaligned record"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "index": 0,
+                        "text": "never"
+                      }
+                    },
+                    "type": "special"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Unauthenticated record"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "index": 0,
+                        "text": "never"
+                      }
+                    },
+                    "type": "special"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "TLS-RPT report"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "index": 0,
+                        "text": "never"
+                      }
+                    },
+                    "type": "special"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "TLS failure"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "index": 0,
+                        "text": "never"
+                      }
+                    },
+                    "type": "special"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 3,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH dmarc AS (\n  SELECT r.domain, MAX(r.date_end) AS last_report\n  FROM reports r\n  WHERE r.domain = ANY(ARRAY[$domain]::text[])\n  GROUP BY r.domain\n),\nclasses AS (\n  SELECT r.domain,\n         MAX(r.date_end) FILTER (WHERE rec.auth_class = 'unaligned') AS last_unaligned,\n         MAX(r.date_end) FILTER (WHERE rec.auth_class = 'unauthenticated') AS last_unauthenticated\n  FROM records rec\n  JOIN reports r ON r.id = rec.report_id\n  WHERE rec.auth_class IN ('unaligned', 'unauthenticated')\n    AND r.domain = ANY(ARRAY[$domain]::text[])\n  GROUP BY r.domain\n),\ntls AS (\n  SELECT p.policy_domain AS domain,\n         MAX(t.date_end) AS last_report,\n         MAX(t.date_end) FILTER (WHERE p.failed_sessions > 0) AS last_failure\n  FROM tlsrpt_policies p\n  JOIN tlsrpt_reports t ON t.id = p.report_id\n  WHERE p.policy_domain = ANY(ARRAY[$domain]::text[])\n  GROUP BY p.policy_domain\n)\nSELECT COALESCE(d.domain, tls.domain) AS \"Domain\",\n       to_timestamp(d.last_report) AS \"DMARC report\",\n       to_timestamp(c.last_unaligned) AS \"Unaligned record\",\n       to_timestamp(c.last_unauthenticated) AS \"Unauthenticated record\",\n       to_timestamp(tls.last_report) AS \"TLS-RPT report\",\n       to_timestamp(tls.last_failure) AS \"TLS failure\"\nFROM dmarc d\nLEFT JOIN classes c ON c.domain = d.domain\nFULL JOIN tls ON tls.domain = d.domain\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Last Report per Domain",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 4,
+      "panels": [],
+      "title": "DMARC",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Messages per day by class: pass (aligned), unaligned (SPF or DKIM passed for another domain), unauthenticated (nothing passed). A report counts on the day its period begins.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 1,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pass"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "unaligned"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "unauthenticated"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__unixEpochGroupAlias(r.date_begin, '1d'),\n       COALESCE(SUM(rec.count) FILTER (WHERE rec.auth_class = 'pass'), 0) AS pass,\n       COALESCE(SUM(rec.count) FILTER (WHERE rec.auth_class = 'unaligned'), 0) AS unaligned,\n       COALESCE(SUM(rec.count) FILTER (WHERE rec.auth_class = 'unauthenticated'), 0) AS unauthenticated\nFROM reports r\nJOIN records rec ON rec.report_id = r.id\nWHERE $__unixEpochFilter(r.date_begin)\n  AND r.domain = ANY(ARRAY[$domain]::text[])\nGROUP BY 1\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Messages by Class",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Share of messages that passed DMARC (aligned SPF or DKIM) per domain and day",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 1,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__unixEpochGroupAlias(r.date_begin, '1d'),\n       r.domain AS metric,\n       100.0 * SUM(r.compliant_messages) / NULLIF(SUM(r.total_messages), 0) AS pass_rate\nFROM reports r\nWHERE $__unixEpochFilter(r.date_begin)\n  AND r.domain = ANY(ARRAY[$domain]::text[])\nGROUP BY 1, 2\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "DMARC Pass Rate per Domain",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "id": 7,
+      "panels": [],
+      "title": "Senders",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Sources whose mail passed SPF or DKIM for a domain other than the From domain: a service sending on the domain's behalf without alignment, or a forwarder. The SPF and DKIM columns name the domains that passed. The PTR shows only when it resolves back to the address.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byType",
+              "options": "time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Source IP"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Country"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Reporters"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Messages"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "id": 8,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Messages"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH unaligned AS (\n  SELECT rec.source_ip, rec.header_from, rec.envelope_from, rec.count,\n         rec.spf_domains, rec.dkim_domains, r.org_name\n  FROM reports r\n  JOIN records rec ON rec.report_id = r.id\n  WHERE $__unixEpochFilter(r.date_begin)\n    AND r.domain = ANY(ARRAY[$domain]::text[])\n    AND rec.auth_class = 'unaligned'\n),\ntop AS (\n  SELECT source_ip,\n         SUM(count) AS messages,\n         string_agg(DISTINCT header_from, ', ') AS header_from,\n         string_agg(DISTINCT NULLIF(envelope_from, ''), ', ') AS envelope_from,\n         COUNT(DISTINCT org_name) AS reporters\n  FROM unaligned\n  GROUP BY source_ip\n  ORDER BY messages DESC\n  LIMIT 50\n),\nresults AS (\n  SELECT DISTINCT source_ip, spf_domains, dkim_domains\n  FROM unaligned\n  WHERE source_ip IN (SELECT source_ip FROM top)\n),\npassed AS (\n  SELECT u.source_ip,\n         string_agg(DISTINCT a.domain, ', ') FILTER (WHERE a.method = 'spf') AS spf,\n         string_agg(DISTINCT a.domain, ', ') FILTER (WHERE a.method = 'dkim') AS dkim\n  FROM results u\n  CROSS JOIN LATERAL (\n    SELECT 'spf' AS method, e->>'Domain' AS domain, e->>'Result' AS result\n    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(u.spf_domains) = 'array' THEN u.spf_domains ELSE '[]' END) e\n    UNION ALL\n    SELECT 'dkim', e->>'Domain', e->>'Result'\n    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(u.dkim_domains) = 'array' THEN u.dkim_domains ELSE '[]' END) e\n  ) a\n  WHERE a.result = 'pass'\n  GROUP BY u.source_ip\n)\nSELECT t.source_ip AS \"Source IP\",\n       src.name AS \"Service\",\n       CASE WHEN src.reverse_dns_verified THEN src.reverse_dns END AS \"Verified PTR\",\n       CASE WHEN src.asn > 0 THEN concat_ws(' ', 'AS' || src.asn, NULLIF(src.as_name, '')) END AS \"AS\",\n       src.country AS \"Country\",\n       t.header_from AS \"Header From\",\n       t.envelope_from AS \"Envelope From\",\n       p.spf AS \"SPF passed for\",\n       p.dkim AS \"DKIM passed for\",\n       t.reporters AS \"Reporters\",\n       t.messages AS \"Messages\"\nFROM top t\nLEFT JOIN passed p ON p.source_ip = t.source_ip\nLEFT JOIN sources src ON src.ip = t.source_ip\nORDER BY t.messages DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Unaligned Senders",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Sources whose mail passed neither SPF nor DKIM for any domain: spoofing, or a sender that is not set up at all. Dispositions show what receivers did with it. The PTR shows only when it resolves back to the address.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byType",
+              "options": "time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Source IP"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Country"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Reporters"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Messages"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "id": 9,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Messages"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH top AS (\n  SELECT rec.source_ip,\n         SUM(rec.count) AS messages,\n         string_agg(DISTINCT rec.header_from, ', ') AS header_from,\n         string_agg(DISTINCT NULLIF(rec.envelope_from, ''), ', ') AS envelope_from,\n         string_agg(DISTINCT rec.disposition, ', ') AS dispositions,\n         COUNT(DISTINCT r.org_name) AS reporters\n  FROM reports r\n  JOIN records rec ON rec.report_id = r.id\n  WHERE $__unixEpochFilter(r.date_begin)\n    AND r.domain = ANY(ARRAY[$domain]::text[])\n    AND rec.auth_class = 'unauthenticated'\n  GROUP BY rec.source_ip\n  ORDER BY messages DESC\n  LIMIT 50\n)\nSELECT t.source_ip AS \"Source IP\",\n       src.name AS \"Service\",\n       CASE WHEN src.reverse_dns_verified THEN src.reverse_dns END AS \"Verified PTR\",\n       CASE WHEN src.asn > 0 THEN concat_ws(' ', 'AS' || src.asn, NULLIF(src.as_name, '')) END AS \"AS\",\n       src.country AS \"Country\",\n       t.header_from AS \"Header From\",\n       t.envelope_from AS \"Envelope From\",\n       t.dispositions AS \"Dispositions\",\n       t.reporters AS \"Reporters\",\n       t.messages AS \"Messages\"\nFROM top t\nLEFT JOIN sources src ON src.ip = t.source_ip\nORDER BY t.messages DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Unauthenticated Sources",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "id": 10,
+      "panels": [],
+      "title": "Policy and Reporters",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Each policy the reports saw published, with the first and last report that carried it. np and testing come from RFC 9990 reports, which have no pct. Reporters that cached an older record overlap.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byType",
+              "options": "time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sp"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "np"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "adkim"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "aspf"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pct"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "testing"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Reports"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Reporters"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "id": 11,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT r.domain AS \"Domain\",\n       NULLIF(r.policy_p, '') AS \"p\",\n       NULLIF(r.policy_sp, '') AS \"sp\",\n       NULLIF(r.policy_np, '') AS \"np\",\n       NULLIF(r.policy_adkim, '') AS \"adkim\",\n       NULLIF(r.policy_aspf, '') AS \"aspf\",\n       CASE WHEN r.schema_version = '2.0' THEN NULL ELSE r.policy_pct END AS \"pct\",\n       NULLIF(r.policy_testing, '') AS \"testing\",\n       COUNT(*) AS \"Reports\",\n       COUNT(DISTINCT r.org_name) AS \"Reporters\",\n       to_timestamp(MIN(r.date_begin)) AS \"First seen\",\n       to_timestamp(MAX(r.date_end)) AS \"Last seen\"\nFROM reports r\nWHERE $__unixEpochFilter(r.date_begin)\n  AND r.domain = ANY(ARRAY[$domain]::text[])\nGROUP BY 1, 2, 3, 4, 5, 6, 7, 8\nORDER BY 1, \"Last seen\" DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Published Policies",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Messages per disposition the receivers applied, by class. Unauthenticated mail with disposition none is mail the published policy did not stop.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pass"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "unaligned"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "unauthenticated"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 52
+      },
+      "id": 12,
+      "options": {
+        "barRadius": 0.05,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "normal",
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(NULLIF(rec.disposition, ''), 'unknown') AS disposition,\n       SUM(rec.count) FILTER (WHERE rec.auth_class = 'pass') AS pass,\n       SUM(rec.count) FILTER (WHERE rec.auth_class = 'unaligned') AS unaligned,\n       SUM(rec.count) FILTER (WHERE rec.auth_class = 'unauthenticated') AS unauthenticated\nFROM reports r\nJOIN records rec ON rec.report_id = r.id\nWHERE $__unixEpochFilter(r.date_begin)\n  AND r.domain = ANY(ARRAY[$domain]::text[])\nGROUP BY 1\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Dispositions by Class",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "The reasons receivers reported for applying a disposition other than the published policy, such as forwarded or mailing_list, and the reporters that gave them",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byType",
+              "options": "time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 52
+      },
+      "id": 13,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Messages"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH overridden AS (\n  SELECT rec.override_reasons, rec.auth_class, rec.disposition, r.org_name,\n         SUM(rec.count) AS messages\n  FROM reports r\n  JOIN records rec ON rec.report_id = r.id\n  WHERE $__unixEpochFilter(r.date_begin)\n    AND r.domain = ANY(ARRAY[$domain]::text[])\n    AND jsonb_typeof(rec.override_reasons) = 'array'\n    AND rec.override_reasons <> '[]'\n  GROUP BY 1, 2, 3, 4\n)\nSELECT o->>'Type' AS \"Reason\",\n       NULLIF(o->>'Comment', '') AS \"Comment\",\n       g.auth_class AS \"Class\",\n       g.disposition AS \"Disposition\",\n       string_agg(DISTINCT g.org_name, ', ') AS \"Reporters\",\n       SUM(g.messages) AS \"Messages\"\nFROM overridden g\nCROSS JOIN LATERAL jsonb_array_elements(g.override_reasons) o\nGROUP BY 1, 2, 3, 4\nORDER BY \"Messages\" DESC\nLIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "Policy Overrides",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Organizations sending aggregate reports for the selected domains",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byType",
+              "options": "time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pass rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 70
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 85
+                    },
+                    {
+                      "color": "green",
+                      "value": 95
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      },
+      "id": 14,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Messages"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT r.org_name AS \"Reporter\",\n       COUNT(*) AS \"Reports\",\n       COUNT(DISTINCT r.domain) AS \"Domains\",\n       COALESCE(SUM(r.total_messages), 0) AS \"Messages\",\n       100.0 * SUM(r.compliant_messages) / NULLIF(SUM(r.total_messages), 0) AS \"Pass rate\",\n       to_timestamp(MAX(r.date_end)) AS \"Last report\"\nFROM reports r\nWHERE $__unixEpochFilter(r.date_begin)\n  AND r.domain = ANY(ARRAY[$domain]::text[])\nGROUP BY r.org_name\nORDER BY \"Messages\" DESC\nLIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "Reporters",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 68
+      },
+      "id": 15,
+      "panels": [],
+      "title": "TLS-RPT",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "SMTP TLS Reporting (RFC 8460) sessions per policy domain and day: successful on the left axis, failed under the domain's MTA-STS or DANE policy as red bars on the right axis",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 1,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "displayName": "${__field.labels.policy_domain} ${__field.name}",
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 80
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "failed"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 69
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__unixEpochGroupAlias(t.date_begin, '1d'),\n       p.policy_domain,\n       SUM(p.successful_sessions) AS successful,\n       SUM(p.failed_sessions) AS failed\nFROM tlsrpt_reports t\nJOIN tlsrpt_policies p ON p.report_id = t.id\nWHERE $__unixEpochFilter(t.date_begin)\n  AND p.policy_domain = ANY(ARRAY[$domain]::text[])\nGROUP BY 1, 2\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "TLS Sessions per Policy Domain",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Failed TLS sessions in the time range by RFC 8460 result type",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 69
+      },
+      "id": 17,
+      "options": {
+        "displayMode": "basic",
+        "maxVizHeight": 24,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "left",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "/^Sessions$/",
+          "values": true
+        },
+        "showUnfilled": true,
+        "sizing": "manual",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT f.result_type AS \"Result type\",\n       SUM(f.failed_sessions) AS \"Sessions\"\nFROM tlsrpt_reports t\nJOIN tlsrpt_policies p ON p.report_id = t.id\nJOIN tlsrpt_failures f ON f.policy_id = p.id\nWHERE $__unixEpochFilter(t.date_begin)\n  AND p.policy_domain = ANY(ARRAY[$domain]::text[])\nGROUP BY 1\nORDER BY 2 DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Failed TLS Sessions by Result Type",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "Failed sessions grouped by cause and endpoints, as the reporters described them: the receiving MX and address, the sending MTA, and the reason code",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byType",
+              "options": "time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Policy"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Result type"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Sessions"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last seen"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 190
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 78
+      },
+      "id": 18,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Sessions"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT p.policy_domain AS \"Policy domain\",\n       p.policy_type AS \"Policy\",\n       f.result_type AS \"Result type\",\n       NULLIF(f.receiving_mx_hostname, '') AS \"Receiving MX\",\n       NULLIF(f.receiving_ip, '') AS \"Receiving IP\",\n       NULLIF(f.sending_mta_ip, '') AS \"Sending MTA\",\n       NULLIF(f.failure_reason_code, '') AS \"Reason code\",\n       string_agg(DISTINCT NULLIF(f.additional_information, ''), ' ') AS \"Additional information\",\n       string_agg(DISTINCT t.org_name, ', ') AS \"Reporters\",\n       SUM(f.failed_sessions) AS \"Sessions\",\n       to_timestamp(MAX(t.date_end)) AS \"Last seen\"\nFROM tlsrpt_reports t\nJOIN tlsrpt_policies p ON p.report_id = t.id\nJOIN tlsrpt_failures f ON f.policy_id = p.id\nWHERE $__unixEpochFilter(t.date_begin)\n  AND p.policy_domain = ANY(ARRAY[$domain]::text[])\nGROUP BY 1, 2, 3, 4, 5, 6, 7\nORDER BY \"Sessions\" DESC\nLIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "title": "TLS Failure Details",
+      "type": "table"
+    }
+  ],
+  "refresh": "1h",
+  "schemaVersion": 39,
+  "tags": [
+    "parse-dmarc",
+    "postgresql",
+    "dmarc",
+    "tls-rpt",
+    "email-security"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Data source",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "grafana-postgresql-datasource",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "SELECT domain FROM reports UNION SELECT policy_domain FROM tlsrpt_policies ORDER BY 1",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Domain",
+        "multi": true,
+        "name": "domain",
+        "options": [],
+        "query": "SELECT domain FROM reports UNION SELECT policy_domain FROM tlsrpt_policies ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "Parse DMARC Reports",
+  "uid": "parse-dmarc-postgres",
+  "version": 1,
+  "weekStart": ""
+}

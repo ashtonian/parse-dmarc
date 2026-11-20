@@ -215,7 +215,7 @@ JMAP (RFC 8620, RFC 8621) replaces IMAP for providers that offer it with scoped 
 
 ## Metrics, Grafana and MCP
 
-`/metrics` is on by default: 37 metrics covering fetch cycles, IMAP connections, parse, store and archive errors, compliance rate overall and per domain, messages per domain by class, the newest report and the newest unaligned or unauthenticated record per domain, TLS-RPT sessions and failure types, SPF and DKIM result counts, and HTTP latency. `grafana/dashboard.json` is a ready dashboard for them. The full list, a Prometheus Operator `ServiceMonitor`, alert rules and a compose stack with Prometheus and Grafana are in [docs/METRICS.md](docs/METRICS.md).
+`/metrics` is on by default: 37 metrics covering fetch cycles, IMAP connections, parse, store and archive errors, compliance rate overall and per domain, messages per domain by class, the newest report and the newest unaligned or unauthenticated record per domain, TLS-RPT sessions and failure types, SPF and DKIM result counts, and HTTP latency. `grafana/dashboard.json` is a ready dashboard for them, and `grafana/dashboard-postgres.json` drills into the reports of a PostgreSQL database. The full list, a Prometheus Operator `ServiceMonitor`, alert rules and a compose stack with Prometheus and Grafana are in [docs/METRICS.md](docs/METRICS.md).
 
 `parse-dmarc --mcp` exposes the same data to an AI assistant over the Model Context Protocol: thirteen tools, from `get_statistics` to `parse_tlsrpt_report`, over stdio or HTTP with optional OAuth2. Setup and the tool list are in [docs/MCP.md](docs/MCP.md).
 
