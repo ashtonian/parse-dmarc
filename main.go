@@ -26,6 +26,9 @@ func main() {
 	cmd := server.Command(version, commit, date, builtBy)
 
 	if err := cmd.Run(context.Background(), os.Args); err != nil {
-		logger.NewLogger("error", false).Fatal().Err(err).Msg("failed to run")
+		// LOG_FORMAT applies to the last line too: a log pipeline that reads
+		// JSON should see why the process exited.
+		log, _ := logger.New("error", os.Getenv("LOG_FORMAT"), false)
+		log.Fatal().Err(err).Msg("failed to run")
 	}
 }
