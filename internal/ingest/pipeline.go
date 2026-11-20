@@ -14,10 +14,11 @@ import (
 	"github.com/dmarcguardhq/parse-dmarc/internal/parser"
 )
 
-// Store is where parsed reports go. SaveReport returns false for a report
+// Store is where parsed reports go. Each save returns false for a report
 // that is already stored.
 type Store interface {
 	SaveReport(ctx context.Context, feedback *parser.Feedback) (bool, error)
+	SaveTLSReport(ctx context.Context, report *parser.TLSReport) (bool, error)
 }
 
 // Pipeline stores the reports of one message at a time. It is an
@@ -33,7 +34,7 @@ func New(store Store, m *metrics.Metrics, log *zerolog.Logger) *Pipeline {
 	return &Pipeline{store: store, metrics: m, log: log}
 }
 
-// Handle parses and stores every report attachment of msg. A report that
+// Handle parses and stores every report attachment of msg, DMARC or TLS-RPT. A report that
 // does not parse is skipped; one that cannot be stored makes the whole
 // message a retry, since reading it again may succeed and the reports it
 // did store are recognised as duplicates then.
@@ -44,7 +45,7 @@ func (p *Pipeline) Handle(ctx context.Context, msg intake.Message) intake.Outcom
 	for _, att := range msg.Attachments {
 		p.metrics.AttachmentSeen()
 
-		feedback, err := parseAttachment(att.Data)
+		report, err := parseAttachment(att.Data)
 		if err != nil {
 			p.log.Warn().Err(err).
 				Str("filename", att.Filename).
@@ -56,10 +57,14 @@ func (p *Pipeline) Handle(ctx context.Context, msg intake.Message) intake.Outcom
 		}
 		p.metrics.ReportParsed()
 
-		saved, err := p.store.SaveReport(ctx, feedback)
+		saved, err := p.save(ctx, report)
+		event := p.log.Info().
+			Str("kind", string(report.Kind)).
+			Str("message_id", msg.MessageID)
+		event = describe(event, report)
 		if err != nil {
 			p.log.Error().Err(err).
-				Str("report_id", feedback.ReportMetadata.ReportID).
+				Str("kind", string(report.Kind)).
 				Str("message_id", msg.MessageID).
 				Msg("failed to save report")
 			p.metrics.ReportStoreFailed()
@@ -67,18 +72,12 @@ func (p *Pipeline) Handle(ctx context.Context, msg intake.Message) intake.Outcom
 			continue
 		}
 		stored++
-
-		event := p.log.Info().
-			Str("report_id", feedback.ReportMetadata.ReportID).
-			Str("message_id", msg.MessageID).
-			Str("org", feedback.ReportMetadata.OrgName).
-			Str("domain", feedback.PolicyPublished.Domain)
 		if !saved {
 			event.Msg("report already stored")
 			continue
 		}
 		p.metrics.ReportStored()
-		event.Int("messages", feedback.GetTotalMessages()).Msg("saved report")
+		event.Msg("saved report")
 	}
 
 	switch {
@@ -91,14 +90,41 @@ func (p *Pipeline) Handle(ctx context.Context, msg intake.Message) intake.Outcom
 	}
 }
 
-// parseAttachment parses one attachment. A report that crashes the parser
-// is a report that does not parse: one hostile attachment must not take the
-// fetch loop down with it.
-func parseAttachment(data []byte) (feedback *parser.Feedback, err error) {
+func (p *Pipeline) save(ctx context.Context, r *parser.Report) (bool, error) {
+	switch r.Kind {
+	case parser.KindTLSRPT:
+		return p.store.SaveTLSReport(ctx, r.TLSRPT)
+	default:
+		return p.store.SaveReport(ctx, r.DMARC)
+	}
+}
+
+// describe adds what identifies a report to a log entry.
+func describe(e *zerolog.Event, r *parser.Report) *zerolog.Event {
+	switch r.Kind {
+	case parser.KindTLSRPT:
+		ok, failed := r.TLSRPT.Sessions()
+		return e.Str("report_id", r.TLSRPT.ReportID).
+			Str("org", r.TLSRPT.OrganizationName).
+			Strs("domains", r.TLSRPT.PolicyDomains()).
+			Int64("successful_sessions", ok).
+			Int64("failed_sessions", failed)
+	default:
+		return e.Str("report_id", r.DMARC.ReportMetadata.ReportID).
+			Str("org", r.DMARC.ReportMetadata.OrgName).
+			Str("domain", r.DMARC.PolicyPublished.Domain).
+			Int("messages", r.DMARC.GetTotalMessages())
+	}
+}
+
+// parseAttachment parses one attachment, DMARC or TLS-RPT. A report that
+// crashes the parser is a report that does not parse: one hostile attachment
+// must not take the fetch loop down with it.
+func parseAttachment(data []byte) (report *parser.Report, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			feedback, err = nil, fmt.Errorf("parser panic: %v", r)
+			report, err = nil, fmt.Errorf("parser panic: %v", r)
 		}
 	}()
-	return parser.ParseReport(data)
+	return parser.Parse(data)
 }

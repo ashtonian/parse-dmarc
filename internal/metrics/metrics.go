@@ -563,6 +563,10 @@ func normalizePath(path string) string {
 		return "/api/top-sources"
 	case len(path) > 13 && path[:13] == "/api/reports/":
 		return "/api/reports/:id"
+	case path == "/api/tlsrpt/statistics", path == "/api/tlsrpt/reports":
+		return path
+	case len(path) > 20 && path[:20] == "/api/tlsrpt/reports/":
+		return "/api/tlsrpt/reports/:id"
 	case path == "/metrics":
 		return "/metrics"
 	default:

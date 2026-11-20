@@ -37,6 +37,26 @@ func (s *fakeStore) SaveReport(_ context.Context, fb *parser.Feedback) (bool, er
 	return true, nil
 }
 
+func (s *fakeStore) SaveTLSReport(_ context.Context, r *parser.TLSReport) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	if s.saved == nil {
+		s.saved = map[string]bool{}
+	}
+	key := "tls:" + r.OrganizationName + "/" + r.ReportID
+	if s.saved[key] {
+		return false, nil
+	}
+	s.saved[key] = true
+	return true, nil
+}
+
+const tlsReport = `{"organization-name":"Google Inc.","date-range":{"start-datetime":"2026-11-18T00:00:00Z",` +
+	`"end-datetime":"2026-11-18T23:59:59Z"},"contact-info":"smtp-tls-reporting@google.com","report-id":"2026-11-18T00:00:00Z_example.com",` +
+	`"policies":[{"policy":{"policy-type":"sts","policy-string":["version: STSv1","mode: testing"],"policy-domain":"example.com",` +
+	`"mx-host":["mx.example.com"]},"summary":{"total-successful-session-count":12,"total-failure-session-count":0}}]}`
+
 func message(attachments ...string) intake.Message {
 	msg := intake.Message{Key: "1", MessageID: "<1@example.com>"}
 	for _, a := range attachments {
@@ -54,6 +74,8 @@ func TestHandleOutcomes(t *testing.T) {
 		want  intake.Outcome
 	}{
 		{"a report that parses is stored", &fakeStore{}, message(goodReport), intake.OutcomeStored},
+		{"a TLS-RPT report is stored", &fakeStore{}, message(tlsReport), intake.OutcomeStored},
+		{"a TLS-RPT duplicate is stored all the same", &fakeStore{saved: map[string]bool{"tls:Google Inc./2026-11-18T00:00:00Z_example.com": true}}, message(tlsReport), intake.OutcomeStored},
 		{"a duplicate is stored all the same", &fakeStore{saved: map[string]bool{"google.com/1": true}}, message(goodReport), intake.OutcomeStored},
 		{"one good report among bad ones", &fakeStore{}, message("<garbage", goodReport), intake.OutcomeStored},
 		{"nothing parses", &fakeStore{}, message("<garbage", "PK nope"), intake.OutcomeInvalid},

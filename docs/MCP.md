@@ -43,17 +43,21 @@ Claude Desktop, Cursor and other stdio clients take an entry like this:
 
 ## Tools
 
-| Tool                 | What it returns                                                                                    |
-| -------------------- | -------------------------------------------------------------------------------------------------- |
-| `get_statistics`     | Total reports, messages, compliance rate, unique source IPs and unique domains.                    |
-| `get_reports`        | Paginated report summaries: ID, organization, domain, date range, message counts, compliance rate. |
-| `get_report_by_id`   | One report in full, every record and its authentication results.                                   |
-| `get_top_source_ips` | Sending IPs ranked by message count, with pass and fail counts per IP.                             |
-| `get_domain_stats`   | Messages, compliant messages and compliance rate per domain.                                       |
-| `get_org_stats`      | Report counts per reporting organization (Google, Microsoft, Yahoo and so on).                     |
-| `get_spf_stats`      | SPF result counts: pass, fail, softfail, neutral and the rest.                                     |
-| `get_dkim_stats`     | DKIM result counts: pass, fail, none and the rest.                                                 |
-| `parse_dmarc_report` | Parses a report you hand it as base64: gzip, zip or plain XML. Nothing is stored.                  |
+| Tool                      | What it returns                                                                                         |
+| ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `get_statistics`          | Total reports, messages, compliance rate, unique source IPs and unique domains.                         |
+| `get_reports`             | Paginated report summaries: ID, organization, domain, date range, message counts, compliance rate.      |
+| `get_report_by_id`        | One report in full, every record and its authentication results.                                        |
+| `get_top_source_ips`      | Sending IPs ranked by message count, with pass and fail counts per IP.                                  |
+| `get_domain_stats`        | Messages, compliant messages and compliance rate per domain.                                            |
+| `get_org_stats`           | Report counts per reporting organization (Google, Microsoft, Yahoo and so on).                          |
+| `get_spf_stats`           | SPF result counts: pass, fail, softfail, neutral and the rest.                                          |
+| `get_dkim_stats`          | DKIM result counts: pass, fail, none and the rest.                                                      |
+| `parse_dmarc_report`      | Parses a report you hand it as base64: gzip, zip or plain XML. Nothing is stored.                       |
+| `get_tlsrpt_statistics`   | TLS-RPT sessions that succeeded and failed, overall and per policy domain, and failures by result type. |
+| `get_tlsrpt_reports`      | TLS-RPT reports, newest first, with reporter, policy domains and session counts. Paginated.             |
+| `get_tlsrpt_report_by_id` | One TLS-RPT report with every policy and its failure details.                                           |
+| `parse_tlsrpt_report`     | Parses a TLS-RPT report you hand it as base64: gzip or plain JSON. Nothing is stored.                   |
 
 ## OAuth2 on the HTTP server
 

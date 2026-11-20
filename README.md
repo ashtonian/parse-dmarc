@@ -38,6 +38,7 @@ When your DMARC record carries a `rua=` address, mail receivers such as Google, 
 
 - Fetches reports over IMAP from any mailbox, or from a local Maildir when the mail server is on the same host (`MAILDIR_PATH`, see [Configuration](#configuration)). Reports that Exchange or Outlook forward as `message/rfc822` attachments are unwrapped too.
 - Parses gzip, zip and raw XML, with a 16 MB decompression cap per report.
+- Parses SMTP TLS Reporting reports too ([RFC 8460](https://www.rfc-editor.org/rfc/rfc8460)): the JSON reports mail receivers send to the `rua=` of a `_smtp._tls` record, telling which sessions to your MX hosts negotiated TLS under your MTA-STS or DANE policy and why the others failed. They can arrive in the same mailbox as the DMARC reports.
 - Stores everything in one SQLite file. No database server, no JVM.
 - Shows pass rate, message volume and top sending sources, and opens any report down to its raw records.
 - Generates your `_dmarc` TXT record from a form.
@@ -45,7 +46,7 @@ When your DMARC record carries a `rua=` address, mail receivers such as Google, 
 - Serves an MCP server, so an AI assistant can query your reports.
 - Dark mode. One static binary in a minimal container image.
 
-It reads aggregate (RUA) reports only. Failure reports (RUF), TLS-RPT, alerting, login and multi-mailbox intake are not built; see [Roadmap and contributing](#roadmap-and-contributing).
+It reads aggregate reports only: DMARC (RUA) and TLS-RPT. Failure reports (RUF), alerting, login and multi-mailbox intake are not built; see [Roadmap and contributing](#roadmap-and-contributing).
 
 ## Run it
 
@@ -184,9 +185,9 @@ JMAP (RFC 8620, RFC 8621) replaces IMAP for providers that offer it with scoped 
 
 `/metrics` is on by default: 28 metrics covering fetch cycles, IMAP connections, parse and store errors, compliance rate overall and per domain, SPF and DKIM result counts, and HTTP latency. `grafana/dashboard.json` is a ready dashboard for them. The full list, a Prometheus Operator `ServiceMonitor`, alert rules and a compose stack with Prometheus and Grafana are in [docs/METRICS.md](docs/METRICS.md).
 
-`parse-dmarc --mcp` exposes the same data to an AI assistant over the Model Context Protocol: nine tools, from `get_statistics` to `parse_dmarc_report`, over stdio or HTTP with optional OAuth2. Setup and the tool list are in [docs/MCP.md](docs/MCP.md).
+`parse-dmarc --mcp` exposes the same data to an AI assistant over the Model Context Protocol: thirteen tools, from `get_statistics` to `parse_tlsrpt_report`, over stdio or HTTP with optional OAuth2. Setup and the tool list are in [docs/MCP.md](docs/MCP.md).
 
-The HTTP API behind the dashboard is five `GET` routes: `/api/statistics`, `/api/reports`, `/api/reports/{id}`, `/api/top-sources` and `/api/version`. None of them has authentication, so keep the port behind your reverse proxy or VPN.
+The HTTP API behind the dashboard is eight `GET` routes: `/api/statistics`, `/api/reports`, `/api/reports/{id}`, `/api/top-sources`, `/api/version`, and for TLS-RPT `/api/tlsrpt/statistics`, `/api/tlsrpt/reports` and `/api/tlsrpt/reports/{id}`. None of them has authentication, so keep the port behind your reverse proxy or VPN.
 
 To serve the dashboard under a path such as `https://example.com/dmarc/`, have the proxy strip the prefix before forwarding, for example nginx's `location /dmarc/ { proxy_pass http://127.0.0.1:8080/; }` ([full example](contrib/nginx/default.conf)). The dashboard loads its assets and API relative to the page, so it needs no setting of its own.
 
@@ -197,7 +198,7 @@ Two products, one maker, separate codebases. Parse DMARC is the whole of this re
 |                 | Parse DMARC                                     | DMARCguard                                                                                                                                                             |
 | --------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Who runs it     | You: a binary or container, a mailbox, a volume | We do                                                                                                                                                                  |
-| What it reads   | DMARC aggregate reports                         | DMARC aggregate reports, TLS-RPT reports, failure reports on Pro, and DNS checks for 9 protocols: DMARC, SPF, DKIM, BIMI, MTA-STS, TLS-RPT, ARC, DANE, ARF (7 on Free) |
+| What it reads   | DMARC aggregate and TLS-RPT reports             | DMARC aggregate reports, TLS-RPT reports, failure reports on Pro, and DNS checks for 9 protocols: DMARC, SPF, DKIM, BIMI, MTA-STS, TLS-RPT, ARC, DANE, ARF (7 on Free) |
 | Sending sources | IP addresses                                    | 170 named senders, Mailchimp or SendGrid rather than an IP, each with the DNS change that fixes it                                                                     |
 | Alerts          | Prometheus rules you write                      | Email on Free; Slack, Teams, Discord and webhooks on Pro                                                                                                               |
 | Retention       | Whatever your disk holds                        | 30 days on Free, 1 year on Pro                                                                                                                                         |

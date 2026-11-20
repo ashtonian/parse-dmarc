@@ -41,7 +41,7 @@ func NewServer(store *storage.Storage, cfg *Config) *Server {
 	}
 
 	opts := &mcp.ServerOptions{
-		Instructions: `Parse-DMARC MCP Server provides tools to query and analyze DMARC aggregate reports.
+		Instructions: `Parse-DMARC MCP Server provides tools to query and analyze DMARC aggregate reports and SMTP TLS Reporting (TLS-RPT) reports.
 
 Available tools:
 - get_statistics: Get overall DMARC compliance statistics
@@ -52,7 +52,11 @@ Available tools:
 - get_org_stats: Get statistics by reporting organization
 - get_spf_stats: Get SPF authentication result statistics
 - get_dkim_stats: Get DKIM authentication result statistics
-- parse_dmarc_report: Parse a raw DMARC XML report`,
+- parse_dmarc_report: Parse a raw DMARC XML report
+- get_tlsrpt_statistics: Get SMTP TLS Reporting session statistics
+- get_tlsrpt_reports: List TLS-RPT reports with pagination
+- get_tlsrpt_report_by_id: Get a TLS-RPT report with its failure details
+- parse_tlsrpt_report: Parse a raw TLS-RPT JSON report`,
 	}
 
 	mcpServer := mcp.NewServer(
@@ -256,4 +260,6 @@ func (s *Server) registerTools() {
 		Name:        "parse_dmarc_report",
 		Description: "Parse a raw DMARC aggregate report from XML data. Accepts gzip, zip, or plain XML. The report_data should be base64 encoded. Returns the parsed report structure.",
 	}, s.parseDMARCReport)
+
+	s.registerTLSTools()
 }
