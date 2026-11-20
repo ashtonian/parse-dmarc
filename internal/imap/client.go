@@ -1,33 +1,45 @@
+// Package imap reads report mail from one IMAP mailbox.
 package imap
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
-	"io"
 	"os"
-	"strings"
+	"sort"
+	"time"
 
 	"github.com/dmarcguardhq/parse-dmarc/internal/config"
+	"github.com/dmarcguardhq/parse-dmarc/internal/intake"
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
-	_ "github.com/emersion/go-message/charset"
-	"github.com/emersion/go-message/mail"
 	"github.com/rs/zerolog"
 )
 
-// Client represents an IMAP client
-type Client struct {
-	config *config.IMAPConfig
-	client *client.Client
-	log    *zerolog.Logger
+// ConnectionRecorder observes connection attempts; *metrics.Metrics is one.
+type ConnectionRecorder interface {
+	RecordIMAPConnection(success bool, duration time.Duration)
 }
 
-// NewClient creates a new IMAP client
-func NewClient(cfg *config.IMAPConfig, log *zerolog.Logger) *Client {
-	return &Client{config: cfg, log: log}
+// Client reads report mail from the configured mailbox. It is an
+// intake.Source.
+type Client struct {
+	config   *config.IMAPConfig
+	client   *client.Client
+	log      *zerolog.Logger
+	recorder ConnectionRecorder
 }
+
+// NewClient creates a new IMAP client. recorder may be nil.
+func NewClient(cfg *config.IMAPConfig, log *zerolog.Logger, recorder ConnectionRecorder) *Client {
+	return &Client{config: cfg, log: log, recorder: recorder}
+}
+
+// Name names the source in logs and metrics.
+func (c *Client) Name() string { return "imap" }
 
 // tlsConfig builds the TLS settings used for both implicit TLS and STARTTLS.
 func (c *Client) tlsConfig() (*tls.Config, error) {
@@ -75,8 +87,17 @@ func (c *Client) dial(addr string, tlsCfg *tls.Config) (*client.Client, error) {
 	return imapClient, nil
 }
 
-// Connect establishes connection to IMAP server
-func (c *Client) Connect() error {
+// connect dials and logs in, recording the attempt.
+func (c *Client) connect() error {
+	start := time.Now()
+	err := c.dialAndLogin()
+	if c.recorder != nil {
+		c.recorder.RecordIMAPConnection(err == nil, time.Since(start))
+	}
+	return err
+}
+
+func (c *Client) dialAndLogin() error {
 	addr := fmt.Sprintf("%s:%d", c.config.Host, c.config.Port)
 	c.log.Debug().Str("addr", addr).Msg("connecting")
 
@@ -87,7 +108,7 @@ func (c *Client) Connect() error {
 
 	imapClient, err := c.dial(addr, tlsCfg)
 	if err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
+		return fmt.Errorf("connect to %s: %w", addr, err)
 	}
 
 	c.client = imapClient
@@ -96,326 +117,250 @@ func (c *Client) Connect() error {
 	// Login
 	if err := c.client.Login(c.config.Username, c.config.Password); err != nil {
 		_ = c.client.Logout()
-		return fmt.Errorf("login failed: %w", err)
+		return fmt.Errorf("log in as %s: %w", c.config.Username, err)
 	}
 
 	c.log.Info().Str("username", c.config.Username).Msg("logged in")
 	return nil
 }
 
-// Disconnect closes the IMAP connection
-func (c *Client) Disconnect() error {
-	if c.client != nil {
-		return c.client.Logout()
+// disconnect logs out, or closes the connection when the session is gone.
+func (c *Client) disconnect() {
+	if c.client == nil {
+		return
 	}
-	return nil
+	if err := c.client.Logout(); err != nil {
+		_ = c.client.Terminate()
+	}
+	c.client = nil
 }
 
-// Report represents a DMARC report email
-type Report struct {
-	Subject string
-	From    string
-	Date    string
-	// MessageID is the RFC 5322 Message-ID from the IMAP envelope: the one
-	// key that finds the mail again on any server (SEARCH HEADER
-	// Message-ID, doveadm search, Gmail's rfc822msgid:) and in the MTA log.
-	MessageID string
-	// UID is the message's IMAP UID in the fetched mailbox. It is only
-	// stable there: a move to the processed mailbox assigns a new one.
-	UID         uint32
-	Attachments []Attachment
-}
+// batchSize bounds how many messages one fetch command returns, and so how
+// many bodies are held in memory at once.
+const batchSize = 50
 
-// Attachment represents an email attachment
-type Attachment struct {
-	Filename string
-	Data     []byte
-}
+// Cycle reads the unseen messages of the mailbox, hands each to handle and
+// settles it by its outcome: stored and invalid messages are marked seen
+// and moved to the processed mailbox as configured; a message to retry is
+// left exactly as it was. Bodies are fetched with BODY.PEEK, so reading a
+// message never marks it seen by itself.
+func (c *Client) Cycle(ctx context.Context, handle intake.Handler) error {
+	if err := c.connect(); err != nil {
+		return err
+	}
+	defer c.disconnect()
 
-// FetchResult holds the fetched reports and the message sequence numbers
-type FetchResult struct {
-	Reports    []Report
-	MessageIDs []uint32
-	// DeadletterIDs are the messages of the batch that carried no report at
-	// all. The Maildir intake moves them to the deadletter mailbox instead of
-	// cur/, so they are not fetched again as if nothing happened.
-	DeadletterIDs []uint32
-}
+	// go-imap v1 takes no context: closing the connection is what ends a
+	// command in flight when the cycle is cancelled.
+	stop := context.AfterFunc(ctx, func() { _ = c.client.Terminate() })
+	defer stop()
 
-// FetchDMARCReports fetches DMARC reports from the mailbox
-func (c *Client) FetchDMARCReports() (*FetchResult, error) {
-	// Select mailbox
 	mbox, err := c.client.Select(c.config.Mailbox, false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to select mailbox: %w", err)
+		return fmt.Errorf("select mailbox %s: %w", c.config.Mailbox, err)
 	}
 
-	if mbox.Messages == 0 {
-		c.log.Info().Msg("no messages in mailbox")
-		return &FetchResult{}, nil
-	}
-
-	// Search for unseen messages
 	criteria := imap.NewSearchCriteria()
 	criteria.WithoutFlags = []string{imap.SeenFlag}
-
-	ids, err := c.client.Search(criteria)
+	uids, err := c.client.UidSearch(criteria)
 	if err != nil {
-		return nil, fmt.Errorf("search failed: %w", err)
+		return fmt.Errorf("search mailbox %s: %w", c.config.Mailbox, err)
+	}
+	if len(uids) == 0 {
+		c.log.Info().Str("mailbox", c.config.Mailbox).Msg("no new messages found")
+		return nil
+	}
+	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
+	c.log.Info().Int("count", len(uids)).Str("mailbox", c.config.Mailbox).Msg("found new messages")
+
+	var errs []error
+	for start := 0; start < len(uids); start += batchSize {
+		if ctx.Err() != nil {
+			break
+		}
+		batch := uids[start:min(start+batchSize, len(uids))]
+		done, err := c.processBatch(ctx, mbox.UidValidity, batch, handle)
+		if err != nil {
+			errs = append(errs, err)
+			break
+		}
+		if err := c.settle(done); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// processBatch fetches a batch of messages and hands each to handle. It
+// returns the UIDs that are done with: stored or invalid.
+func (c *Client) processBatch(ctx context.Context, uidValidity uint32, uids []uint32, handle intake.Handler) ([]uint32, error) {
+	envelopes, err := c.fetchEnvelopes(uids)
+	if err != nil {
+		return nil, err
 	}
 
-	if len(ids) == 0 {
-		c.log.Info().Msg("no new messages found")
-		return &FetchResult{}, nil
+	var done, wanted []uint32
+	for _, uid := range uids {
+		env, ok := envelopes[uid]
+		if !ok {
+			// Expunged by another client since the search.
+			continue
+		}
+		if env.size > intake.MaxMessageSize {
+			c.log.Warn().
+				Uint32("uid", uid).
+				Str("message_id", env.messageID).
+				Uint32("size", env.size).
+				Msg("message is too large to be a report; it is marked processed without being read")
+			done = append(done, uid)
+			continue
+		}
+		wanted = append(wanted, uid)
 	}
 
-	c.log.Info().Int("count", len(ids)).Msg("found new messages")
+	bodies, err := c.fetchBodies(wanted)
+	if err != nil {
+		return nil, err
+	}
 
+	for _, uid := range wanted {
+		env := envelopes[uid]
+		body, ok := bodies[uid]
+		if !ok {
+			c.log.Warn().Uint32("uid", uid).Msg("server didn't return message body")
+			continue
+		}
+		msg := intake.Message{
+			Key:         fmt.Sprintf("%d:%d", uidValidity, uid),
+			MessageID:   env.messageID,
+			From:        env.from,
+			Subject:     env.subject,
+			Date:        env.date,
+			Attachments: intake.CollectAttachments(c.log, bytes.NewReader(body)),
+		}
+
+		outcome := intake.OutcomeInvalid
+		if len(msg.Attachments) == 0 {
+			// The only trace that a sender's report went unrecognized:
+			// message_id finds it again anywhere.
+			c.log.Warn().
+				Str("message_id", msg.MessageID).
+				Uint32("uid", uid).
+				Str("mailbox", c.config.Mailbox).
+				Str("from", msg.From).
+				Str("subject", msg.Subject).
+				Time("date", msg.Date).
+				Msg("no report attachment in message; it is marked processed all the same")
+		} else {
+			outcome = handle(ctx, msg)
+		}
+
+		if outcome != intake.OutcomeRetry {
+			done = append(done, uid)
+		}
+	}
+	return done, nil
+}
+
+type envelope struct {
+	messageID, from, subject string
+	date                     time.Time
+	size                     uint32
+}
+
+func (c *Client) fetchEnvelopes(uids []uint32) (map[uint32]envelope, error) {
+	out := make(map[uint32]envelope, len(uids))
+	err := c.uidFetch(uids, []imap.FetchItem{imap.FetchUid, imap.FetchEnvelope, imap.FetchRFC822Size}, func(msg *imap.Message) {
+		e := envelope{size: msg.Size}
+		if msg.Envelope != nil {
+			e.messageID = msg.Envelope.MessageId
+			e.subject = msg.Envelope.Subject
+			e.date = msg.Envelope.Date
+			if len(msg.Envelope.From) > 0 {
+				e.from = msg.Envelope.From[0].Address()
+			}
+		}
+		out[msg.Uid] = e
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fetch envelopes: %w", err)
+	}
+	return out, nil
+}
+
+func (c *Client) fetchBodies(uids []uint32) (map[uint32][]byte, error) {
+	out := make(map[uint32][]byte, len(uids))
+	if len(uids) == 0 {
+		return out, nil
+	}
+	section := &imap.BodySectionName{Peek: true}
+	err := c.uidFetch(uids, []imap.FetchItem{imap.FetchUid, section.FetchItem()}, func(msg *imap.Message) {
+		r := msg.GetBody(section)
+		if r == nil {
+			return
+		}
+		var buf bytes.Buffer
+		if _, err := buf.ReadFrom(r); err != nil {
+			c.log.Warn().Err(err).Uint32("uid", msg.Uid).Msg("reading message body")
+			return
+		}
+		out[msg.Uid] = buf.Bytes()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fetch bodies: %w", err)
+	}
+	return out, nil
+}
+
+// uidFetch runs UID FETCH and calls fn for each message as it arrives.
+func (c *Client) uidFetch(uids []uint32, items []imap.FetchItem, fn func(*imap.Message)) error {
 	seqSet := new(imap.SeqSet)
-	seqSet.AddNum(ids...)
+	seqSet.AddNum(uids...)
 
 	messages := make(chan *imap.Message, 10)
 	done := make(chan error, 1)
-
-	section := &imap.BodySectionName{Peek: !c.config.MarkAsSeen}
-	items := []imap.FetchItem{section.FetchItem(), imap.FetchEnvelope, imap.FetchFlags, imap.FetchUid}
-
 	go func() {
-		done <- c.client.Fetch(seqSet, items, messages)
+		done <- c.client.UidFetch(seqSet, items, messages)
 	}()
-
-	var reports []Report
-	var messageIDs []uint32
-
 	for msg := range messages {
-		messageIDs = append(messageIDs, msg.SeqNum)
-
-		r := msg.GetBody(section)
-		if r == nil {
-			c.log.Warn().Uint32("uid", msg.Uid).Msg("server didn't return message body")
-			continue
-		}
-
-		report := Report{
-			Subject:   msg.Envelope.Subject,
-			Date:      msg.Envelope.Date.String(),
-			MessageID: msg.Envelope.MessageId,
-			UID:       msg.Uid,
-		}
-
-		if len(msg.Envelope.From) > 0 {
-			report.From = msg.Envelope.From[0].Address()
-		}
-
-		report.Attachments = c.collectAttachments(r, 0)
-
-		// A message without a recognized report is still marked seen and
-		// moved with the rest of the batch, so this line is the only trace
-		// that a sender's report went unrecognized. message_id finds it
-		// again anywhere; uid only until the batch is moved.
-		if len(report.Attachments) == 0 {
-			c.log.Warn().
-				Str("message_id", report.MessageID).
-				Uint32("uid", report.UID).
-				Str("mailbox", c.config.Mailbox).
-				Str("processed_mailbox", c.config.ProcessedMailbox).
-				Str("from", report.From).
-				Str("subject", report.Subject).
-				Time("date", msg.Envelope.Date).
-				Msg("no DMARC report attachment in message; it is marked seen or moved with the batch all the same")
-			continue
-		}
-		reports = append(reports, report)
+		fn(msg)
 	}
-
-	if err := <-done; err != nil {
-		return nil, fmt.Errorf("fetch failed: %w", err)
-	}
-
-	return &FetchResult{Reports: reports, MessageIDs: messageIDs}, nil
+	return <-done
 }
 
-// MarkAsSeen marks messages as seen
-func (c *Client) MarkAsSeen(messageIDs []uint32) error {
-	if len(messageIDs) == 0 {
+// settle marks the given messages seen and moves them to the processed
+// mailbox, as configured, addressing them by UID so a concurrent expunge by
+// another client cannot shift the command onto other messages.
+func (c *Client) settle(uids []uint32) error {
+	if len(uids) == 0 {
 		return nil
 	}
-
 	seqSet := new(imap.SeqSet)
-	seqSet.AddNum(messageIDs...)
+	seqSet.AddNum(uids...)
 
-	item := imap.FormatFlagsOp(imap.AddFlags, true)
-	flags := []interface{}{imap.SeenFlag}
-
-	return c.client.Store(seqSet, item, flags, nil)
-}
-
-// MoveMessages moves messages to a destination mailbox using COPY + DELETE + EXPUNGE
-func (c *Client) MoveMessages(messageIDs []uint32, destMailbox string) error {
-	if len(messageIDs) == 0 {
-		return nil
+	if c.config.MarkAsSeen {
+		item := imap.FormatFlagsOp(imap.AddFlags, true)
+		if err := c.client.UidStore(seqSet, item, []interface{}{imap.SeenFlag}, nil); err != nil {
+			return fmt.Errorf("mark %d messages seen: %w", len(uids), err)
+		}
+		c.log.Info().Int("count", len(uids)).Msg("marked messages as seen")
 	}
 
-	// Ensure destination mailbox exists (ignore error if it already exists)
-	if err := c.client.Create(destMailbox); err != nil {
-		c.log.Debug().Err(err).Str("mailbox", destMailbox).Msg("create mailbox (may already exist)")
+	if dest := c.config.ProcessedMailbox; dest != "" {
+		// Ensure the destination exists; an error here usually means it
+		// already does, and the move reports any real problem.
+		if err := c.client.Create(dest); err != nil {
+			c.log.Debug().Err(err).Str("mailbox", dest).Msg("create mailbox (may already exist)")
+		}
+		// MOVE (RFC 6851) where the server has it; otherwise go-imap falls
+		// back to UID COPY, UID STORE \Deleted and EXPUNGE.
+		if err := c.client.UidMove(seqSet, dest); err != nil {
+			return fmt.Errorf("move %d messages to %s: %w", len(uids), dest, err)
+		}
+		c.log.Info().Int("count", len(uids)).Str("mailbox", dest).Msg("moved messages to processed mailbox")
 	}
-
-	seqSet := new(imap.SeqSet)
-	seqSet.AddNum(messageIDs...)
-
-	// Copy to destination mailbox
-	if err := c.client.Copy(seqSet, destMailbox); err != nil {
-		return fmt.Errorf("copy to %s: %w", destMailbox, err)
-	}
-
-	// Mark originals as deleted
-	item := imap.FormatFlagsOp(imap.AddFlags, true)
-	flags := []interface{}{imap.DeletedFlag}
-	if err := c.client.Store(seqSet, item, flags, nil); err != nil {
-		return fmt.Errorf("mark deleted: %w", err)
-	}
-
-	// Expunge deleted messages
-	if err := c.client.Expunge(nil); err != nil {
-		return fmt.Errorf("expunge: %w", err)
-	}
-
 	return nil
-}
-
-// maxNestDepth bounds recursion into forwarded/embedded messages.
-const maxNestDepth = 4
-
-// CollectAttachments walks a raw MIME message and returns the DMARC report
-// attachments in it. It is exported for the Maildir intake, which holds whole
-// messages on disk instead of an IMAP body.
-func CollectAttachments(log *zerolog.Logger, r io.Reader) []Attachment {
-	return (&Client{log: log}).collectAttachments(r, 0)
-}
-
-// collectAttachments walks a MIME message and returns DMARC report attachments,
-// descending into embedded messages (Google reports relayed through Exchange or
-// Outlook arrive as a message/rfc822 attachment wrapping the real .zip).
-func (c *Client) collectAttachments(r io.Reader, depth int) []Attachment {
-	if depth > maxNestDepth {
-		c.log.Warn().Msg("max nesting depth reached; skipping embedded message")
-		return nil
-	}
-
-	mr, err := mail.CreateReader(r)
-	if err != nil {
-		c.log.Warn().Err(err).Msg("failed to create mail reader")
-		return nil
-	}
-	defer func() { _ = mr.Close() }()
-
-	var attachments []Attachment
-	for {
-		part, err := mr.NextPart()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			c.log.Warn().Err(err).Msg("error reading part")
-			break
-		}
-
-		// Reports do not always arrive as a formal attachment: Fastmail
-		// sends its aggregate reports with Content-Disposition: inline,
-		// which go-message surfaces as *mail.InlineHeader (it uses the
-		// same type for text/* parts with no disposition at all). Both
-		// types wrap a message.Header, and AttachmentHeader.Filename
-		// already reads the disposition filename with a Content-Type name
-		// fallback, so wrap the inline header and leave the decision to
-		// isDMARCAttachment below.
-		var h *mail.AttachmentHeader
-		inline := false
-		switch ph := part.Header.(type) {
-		case *mail.AttachmentHeader:
-			h = ph
-		case *mail.InlineHeader:
-			h = &mail.AttachmentHeader{Header: ph.Header}
-			inline = true
-		default:
-			continue
-		}
-
-		filename, _ := h.Filename()
-		contentType, _, _ := h.ContentType()
-
-		// An unnamed inline text part is the human-readable body of the
-		// mail, not a report. Skip it before reading so a large HTML body
-		// is neither buffered nor content-sniffed: a body that merely
-		// quotes "<feedback" must not turn into an attachment.
-		if inline && filename == "" && strings.HasPrefix(strings.ToLower(contentType), "text/") {
-			continue
-		}
-
-		data, err := io.ReadAll(part.Body)
-		if err != nil {
-			c.log.Warn().Err(err).Msg("error reading attachment")
-			continue
-		}
-
-		if isEmbeddedMessage(contentType, filename, data) {
-			attachments = append(attachments, c.collectAttachments(bytes.NewReader(data), depth+1)...)
-			continue
-		}
-
-		// Outlook's binary .msg (OLE compound file) needs a CFB reader;
-		// log it instead of silently dropping. Add a parser if it shows up often.
-		if bytes.HasPrefix(data, []byte{0xd0, 0xcf, 0x11, 0xe0}) {
-			c.log.Warn().Str("filename", filename).Msg("unsupported Outlook .msg (OLE) attachment; ask the sender to forward as .eml")
-			continue
-		}
-
-		if isDMARCAttachment(filename, data) {
-			attachments = append(attachments, Attachment{Filename: filename, Data: data})
-		} else {
-			c.log.Debug().
-				Str("filename", filename).
-				Str("content_type", contentType).
-				Msg("skipping attachment that does not look like a DMARC report")
-		}
-	}
-
-	return attachments
-}
-
-// isEmbeddedMessage reports whether the attachment is itself an email message.
-func isEmbeddedMessage(contentType, filename string, data []byte) bool {
-	if strings.HasPrefix(strings.ToLower(contentType), "message/rfc822") {
-		return true
-	}
-	lower := strings.ToLower(filename)
-	if !strings.HasSuffix(lower, ".eml") && !strings.HasSuffix(lower, ".msg") {
-		return false
-	}
-	// .msg is ambiguous: rfc822 text from most relays, OLE binary from Outlook.
-	return bytes.Contains(headOf(data), []byte(":"))
-}
-
-func headOf(data []byte) []byte {
-	if len(data) > 512 {
-		return data[:512]
-	}
-	return data
-}
-
-// isDMARCAttachment checks if an attachment is likely a DMARC report, by
-// filename or — for senders using opaque names — by sniffing the content.
-func isDMARCAttachment(filename string, data []byte) bool {
-	lower := strings.ToLower(filename)
-	if strings.HasSuffix(lower, ".xml") ||
-		strings.HasSuffix(lower, ".gz") ||
-		strings.HasSuffix(lower, ".zip") ||
-		strings.Contains(lower, "dmarc") {
-		return true
-	}
-
-	// Content sniff: gzip/zip magic, or a raw <feedback> document.
-	return bytes.HasPrefix(data, []byte{0x1f, 0x8b}) ||
-		bytes.HasPrefix(data, []byte("PK\x03\x04")) ||
-		bytes.Contains(headOf(data), []byte("<feedback"))
 }

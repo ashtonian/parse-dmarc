@@ -160,6 +160,8 @@ An IMAP server whose certificate comes from your own CA fails with `x509: certif
 
 On a host that already receives the reports, point `MAILDIR_PATH` at the Maildir (for example `/var/mail/dmarc/Maildir`) and no IMAP settings are needed: every fetch reads `<MAILDIR_PATH>/new` and moves each message to `<MAILDIR_PATH>/cur` once it has been parsed. The messages are read as whole emails, exactly as Postfix or Courier deliver them. A message no report can be read from, or whose report does not parse, is moved to `<MAILDIR_PATH>/DEADLETTER` (`IMAP_DEADLETTER_BOX`) instead, so an operator sees what the parser dropped.
 
+Over IMAP, each fetch reads the unseen messages of `IMAP_MAILBOX` by UID and without marking them seen. Once a message's reports are stored, or once it is clear none of its attachments is a report, it is marked seen (`IMAP_MARK_AS_SEEN`) and moved to `IMAP_PROCESSED_MAILBOX` when that is set. A message whose report could not be stored, because the database was unreachable for example, is left unseen where it was and read again on the next fetch; the same holds for a message in a Maildir's `new/`. A report stored before is recognised and skipped, so reading a message twice never stores it twice. Messages over 32 MiB are not read.
+
 | Flag                        | What it does                                                                                  |
 | --------------------------- | --------------------------------------------------------------------------------------------- |
 | `--fetch-once`              | Fetch, parse, store, exit. For cron.                                                          |

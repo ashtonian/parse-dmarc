@@ -1,12 +1,15 @@
 package maildir
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dmarcguardhq/parse-dmarc/internal/config"
+	"github.com/dmarcguardhq/parse-dmarc/internal/intake"
 	"github.com/rs/zerolog"
 )
 
@@ -48,10 +51,14 @@ func newMaildir(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-func TestFetchThenMoveToCur(t *testing.T) {
+// Each message is settled by its outcome: stored to cur/, invalid (or with
+// no report at all) to the deadletter mailbox, retry left in new/.
+func TestCycleSettlesByOutcome(t *testing.T) {
 	dir := newMaildir(t, map[string]string{
 		"1700000000.report":  reportMessage(),
 		"1700000001.chatter": "From: someone@example.com\r\nSubject: no report here\r\n\r\nhello\r\n",
+		"1700000002.retry":   reportMessage(),
+		"1700000003.invalid": reportMessage(),
 	})
 
 	log := zerolog.Nop()
@@ -60,42 +67,37 @@ func TestFetchThenMoveToCur(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := c.FetchDMARCReports()
-	if err != nil {
+	var handled []intake.Message
+	outcomes := map[string]intake.Outcome{
+		"1700000000.report":  intake.OutcomeStored,
+		"1700000002.retry":   intake.OutcomeRetry,
+		"1700000003.invalid": intake.OutcomeInvalid,
+	}
+	handle := func(_ context.Context, msg intake.Message) intake.Outcome {
+		handled = append(handled, msg)
+		return outcomes[msg.Key]
+	}
+	if err := c.Cycle(context.Background(), handle); err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Reports) != 1 || len(result.MessageIDs) != 1 || len(result.DeadletterIDs) != 1 {
-		t.Fatalf("want 1 report out of 2 messages and the other one a deadletter, got %d reports / %d message IDs / %d deadletter IDs",
-			len(result.Reports), len(result.MessageIDs), len(result.DeadletterIDs))
+
+	if len(handled) != 3 {
+		t.Fatalf("want the 3 messages with a report handled, got %d", len(handled))
 	}
-	if len(result.Reports[0].Attachments) != 1 {
-		t.Fatalf("want 1 attachment, got %d", len(result.Reports[0].Attachments))
+	first := handled[0]
+	if first.MessageID != "<report-1@google.com>" || len(first.Attachments) != 1 {
+		t.Fatalf("message: %+v", first)
 	}
-	att := result.Reports[0].Attachments[0]
-	if att.Filename != reportName || string(att.Data) != reportXML {
+	if att := first.Attachments[0]; att.Filename != reportName || string(att.Data) != reportXML {
 		t.Fatalf("want the report attachment %q, got %q (%d bytes)", reportName, att.Filename, len(att.Data))
 	}
-	if result.Reports[0].MessageID != "<report-1@google.com>" {
-		t.Fatalf("want the Message-ID header, got %q", result.Reports[0].MessageID)
-	}
 
-	if err := c.MoveToDeadletter(result.DeadletterIDs); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.MoveToCur(result.MessageIDs); err != nil {
-		t.Fatal(err)
-	}
-
-	newLeft, err := os.ReadDir(filepath.Join(dir, "new"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(newLeft) != 0 {
-		t.Fatalf("want new/ empty after the move, %d left", len(newLeft))
-	}
-	// The message with no report is not dropped: it waits in the deadletter
-	// mailbox for the operator, and the report itself is done with in cur/.
-	for _, name := range []string{"cur/1700000000.report:2,S", "DEADLETTER/1700000001.chatter:2,S"} {
+	for _, name := range []string{
+		"cur/1700000000.report:2,S",
+		"DEADLETTER/1700000001.chatter:2,S",
+		"new/1700000002.retry",
+		"DEADLETTER/1700000003.invalid:2,S",
+	} {
 		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(name))); err != nil {
 			t.Errorf("want %s: %v", name, err)
 		}
@@ -108,14 +110,38 @@ func TestFetchThenMoveToCur(t *testing.T) {
 		t.Error("message body changed on the way to cur/")
 	}
 
-	// A moved batch is not fetched twice.
-	again, err := c.FetchDMARCReports()
+	// Only the message to retry is read again.
+	handled = nil
+	if err := c.Cycle(context.Background(), handle); err != nil {
+		t.Fatal(err)
+	}
+	if len(handled) != 1 || handled[0].Key != "1700000002.retry" {
+		t.Fatalf("second cycle handled %d messages, want only the retry", len(handled))
+	}
+}
+
+// A cancelled cycle stops before the next message and leaves it in new/.
+func TestCycleStopsWhenCancelled(t *testing.T) {
+	dir := newMaildir(t, map[string]string{"1.report": reportMessage(), "2.report": reportMessage()})
+	log := zerolog.Nop()
+	c, err := NewClient(&config.MaildirConfig{Path: dir, DeadletterMailbox: "DEADLETTER"}, &log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(again.Reports) != 0 || len(again.MessageIDs) != 0 || len(again.DeadletterIDs) != 0 {
-		t.Fatalf("want an empty second fetch, got %d reports / %d message IDs / %d deadletter IDs",
-			len(again.Reports), len(again.MessageIDs), len(again.DeadletterIDs))
+	ctx, cancel := context.WithCancel(context.Background())
+	handle := func(context.Context, intake.Message) intake.Outcome {
+		cancel()
+		return intake.OutcomeStored
+	}
+	if err := c.Cycle(ctx, handle); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	left, err := os.ReadDir(filepath.Join(dir, "new"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 {
+		t.Fatalf("want 1 message left in new/, got %d", len(left))
 	}
 }
 
@@ -140,13 +166,13 @@ func TestNewClientRejectsUnreadablePath(t *testing.T) {
 	}
 }
 
-func TestFetchWithoutNewDir(t *testing.T) {
+func TestCycleWithoutNewDir(t *testing.T) {
 	log := zerolog.Nop()
 	c, err := NewClient(&config.MaildirConfig{Path: t.TempDir()}, &log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.FetchDMARCReports(); err == nil {
+	if err := c.Cycle(context.Background(), func(context.Context, intake.Message) intake.Outcome { return intake.OutcomeStored }); err == nil {
 		t.Fatal("want an error for a directory that is not a Maildir")
 	}
 }

@@ -380,13 +380,95 @@ func (m *Metrics) Handler() http.Handler {
 	})
 }
 
+// The recording methods below are safe on a nil *Metrics, which is what
+// the fetch loop holds when metrics are off.
+
+// FetchCycle counts the start of a fetch cycle.
+func (m *Metrics) FetchCycle() {
+	if m == nil {
+		return
+	}
+	m.FetchCyclesTotal.Inc()
+}
+
+// FetchFailed counts a fetch cycle that ended in an error.
+func (m *Metrics) FetchFailed() {
+	if m == nil {
+		return
+	}
+	m.FetchErrors.Inc()
+}
+
+// FetchSucceeded records a fetch cycle that completed.
+func (m *Metrics) FetchSucceeded(duration time.Duration) {
+	if m == nil {
+		return
+	}
+	m.FetchDuration.Observe(duration.Seconds())
+	m.LastFetchTimestamp.SetToCurrentTime()
+}
+
+// MessageFetched counts a report mail handed to the pipeline.
+func (m *Metrics) MessageFetched() {
+	if m == nil {
+		return
+	}
+	m.ReportsFetched.Inc()
+}
+
+// AttachmentSeen counts a report attachment.
+func (m *Metrics) AttachmentSeen() {
+	if m == nil {
+		return
+	}
+	m.AttachmentsTotal.Inc()
+}
+
+// ReportParsed counts a report that parsed.
+func (m *Metrics) ReportParsed() {
+	if m == nil {
+		return
+	}
+	m.ReportsParsed.Inc()
+}
+
+// ReportParseFailed counts a report that did not parse.
+func (m *Metrics) ReportParseFailed() {
+	if m == nil {
+		return
+	}
+	m.ReportParseErrors.Inc()
+}
+
+// ReportStored counts a report saved for the first time.
+func (m *Metrics) ReportStored() {
+	if m == nil {
+		return
+	}
+	m.ReportsStored.Inc()
+}
+
+// ReportStoreFailed counts a report the store refused.
+func (m *Metrics) ReportStoreFailed() {
+	if m == nil {
+		return
+	}
+	m.ReportStoreErrors.Inc()
+}
+
 // RecordFetchDuration records the duration of a fetch operation
 func (m *Metrics) RecordFetchDuration(duration time.Duration) {
+	if m == nil {
+		return
+	}
 	m.FetchDuration.Observe(duration.Seconds())
 }
 
 // RecordIMAPConnection records an IMAP connection attempt
 func (m *Metrics) RecordIMAPConnection(success bool, duration time.Duration) {
+	if m == nil {
+		return
+	}
 	status := "success"
 	if !success {
 		status = "error"

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dmarcguardhq/parse-dmarc/internal/config"
+	"github.com/dmarcguardhq/parse-dmarc/internal/ingest"
 	"github.com/dmarcguardhq/parse-dmarc/internal/logger"
 	"github.com/dmarcguardhq/parse-dmarc/internal/storage"
 )
@@ -69,7 +70,11 @@ func TestFetchMaildirReportsDeadlettersUnreadableMessage(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	cfg := &config.Config{Maildir: config.MaildirConfig{Path: dir, DeadletterMailbox: "DEADLETTER"}}
-	if err := fetchMaildirReports(context.Background(), cfg, store, nil); err != nil {
+	source, err := newSource(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fetchReports(context.Background(), source, ingest.New(store, nil, log), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,5 +93,51 @@ func TestFetchMaildirReportsDeadlettersUnreadableMessage(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, "DEADLETTER", name)); err != nil {
 			t.Errorf("want %s in the deadletter mailbox, not dropped: %v", name, err)
 		}
+	}
+}
+
+// A report the store refuses is not lost: its message stays in new/ and is
+// stored on the next cycle once the store is back.
+func TestFetchRetriesWhenTheStoreFails(t *testing.T) {
+	log = logger.NewLogger("error", false)
+	dir := newTestMaildir(t, map[string]string{
+		"1.report": maildirMessage("google.com!example.com!1609459200.xml", goodReportXML),
+	})
+	path := filepath.Join(t.TempDir(), "db.sqlite")
+	cfg := &config.Config{Maildir: config.MaildirConfig{Path: dir, DeadletterMailbox: "DEADLETTER"}}
+	source, err := newSource(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	broken, err := storage.Open(context.Background(), storage.Options{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = broken.Close()
+	if err := fetchReports(context.Background(), source, ingest.New(broken, nil, log), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "new", "1.report")); err != nil {
+		t.Fatalf("want the message left in new/ after a store failure: %v", err)
+	}
+
+	store, err := storage.Open(context.Background(), storage.Options{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	if err := fetchReports(context.Background(), source, ingest.New(store, nil, log), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "cur", "1.report:2,S")); err != nil {
+		t.Fatalf("want the message in cur/ once stored: %v", err)
+	}
+	stats, err := store.GetStatistics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.TotalReports != 1 {
+		t.Fatalf("want the report stored on the second cycle, got %d reports", stats.TotalReports)
 	}
 }
