@@ -567,8 +567,8 @@ func normalizePath(path string) string {
 		return path
 	case len(path) > 20 && path[:20] == "/api/tlsrpt/reports/":
 		return "/api/tlsrpt/reports/:id"
-	case path == "/metrics":
-		return "/metrics"
+	case path == "/metrics", path == "/healthz", path == "/readyz":
+		return path
 	default:
 		// Group static assets
 		if len(path) >= 7 && path[:7] == "/assets" {

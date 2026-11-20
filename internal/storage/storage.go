@@ -129,6 +129,11 @@ func positiveDurationOr(v, def time.Duration) time.Duration {
 	return def
 }
 
+// Ping checks that the database answers.
+func (s *Storage) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 // Close closes the database.
 func (s *Storage) Close() error {
 	return s.db.Close()

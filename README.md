@@ -187,7 +187,7 @@ JMAP (RFC 8620, RFC 8621) replaces IMAP for providers that offer it with scoped 
 
 `parse-dmarc --mcp` exposes the same data to an AI assistant over the Model Context Protocol: thirteen tools, from `get_statistics` to `parse_tlsrpt_report`, over stdio or HTTP with optional OAuth2. Setup and the tool list are in [docs/MCP.md](docs/MCP.md).
 
-The HTTP API behind the dashboard is eight `GET` routes: `/api/statistics`, `/api/reports`, `/api/reports/{id}`, `/api/top-sources`, `/api/version`, and for TLS-RPT `/api/tlsrpt/statistics`, `/api/tlsrpt/reports` and `/api/tlsrpt/reports/{id}`. None of them has authentication, so keep the port behind your reverse proxy or VPN.
+The HTTP API behind the dashboard is eight `GET` routes: `/api/statistics`, `/api/reports`, `/api/reports/{id}`, `/api/top-sources`, `/api/version`, and for TLS-RPT `/api/tlsrpt/statistics`, `/api/tlsrpt/reports` and `/api/tlsrpt/reports/{id}`. None of them has authentication, so keep the port behind your reverse proxy or VPN. `/healthz` answers 200 while the process serves HTTP and `/readyz` 200 while the database answers too (503 otherwise), for liveness and readiness probes.
 
 To serve the dashboard under a path such as `https://example.com/dmarc/`, have the proxy strip the prefix before forwarding, for example nginx's `location /dmarc/ { proxy_pass http://127.0.0.1:8080/; }` ([full example](contrib/nginx/default.conf)). The dashboard loads its assets and API relative to the page, so it needs no setting of its own.
 
