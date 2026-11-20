@@ -31,6 +31,9 @@ var (
 type Config struct {
 	LogLevel    string         `json:"log_level" env:"LOG_LEVEL" envDefault:"info"`
 	LogFormat   string         `json:"log_format" env:"LOG_FORMAT" envDefault:"console"`
+	// RetentionDays deletes reports whose period ended longer ago; 0 keeps
+	// everything.
+	RetentionDays int `json:"retention_days" env:"RETENTION_DAYS"`
 	// FetchTimeoutSeconds bounds one fetch cycle; mail left unread is read
 	// on the next one.
 	FetchTimeoutSeconds int `json:"fetch_timeout_seconds" env:"FETCH_TIMEOUT_SECONDS" envDefault:"600"`

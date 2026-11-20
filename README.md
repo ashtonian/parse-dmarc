@@ -159,6 +159,7 @@ Every setting in this table is an environment variable or a key in `config.json`
 | Origins that may call the API                   | `CORS_ALLOWED_ORIGINS`                                         | unset: no CORS headers                                       |
 | Seconds between fetches                         | `FETCH_INTERVAL`                                               | `300`                                                        |
 | Seconds one fetch may take                      | `FETCH_TIMEOUT_SECONDS`                                        | `600`                                                        |
+| Days to keep reports                            | `RETENTION_DAYS`                                               | `0`: keep everything                                         |
 | Seconds to drain on shutdown                    | `SHUTDOWN_TIMEOUT_SECONDS`                                     | `10`                                                         |
 | S3 archive bucket                               | `S3_BUCKET`                                                    | unset: no archive                                            |
 | S3 endpoint                                     | `S3_ENDPOINT`                                                  | AWS                                                          |
@@ -178,6 +179,8 @@ Every setting in this table is an environment variable or a key in `config.json`
 | Log format: `console` or `json`                 | `LOG_FORMAT`                                                   | `console`                                                    |
 
 On `SIGTERM` or `SIGINT` the fetch in progress is cancelled (mail it had not finished with is read again on the next start), the HTTP server stops accepting connections and gives in-flight requests `SHUTDOWN_TIMEOUT_SECONDS` to finish, and only then is the database closed. A fetch that runs longer than `FETCH_TIMEOUT_SECONDS` is cancelled the same way and resumes on the next cycle.
+
+`RETENTION_DAYS` deletes, after each fetch, the DMARC and TLS-RPT reports whose period ended longer ago, with their records and the sender details no remaining record uses. Messages already processed stay recorded as such, so a pruned report is not read in again. Objects in the S3 archive are kept; expire them with a lifecycle rule on the bucket.
 
 With `S3_BUCKET` set, every report is written to that bucket before it is stored: the attachment exactly as received under `<prefix>raw/<dmarc|tlsrpt>/year=YYYY/month=MM/day=DD/` and the parsed report as JSON under the same path below `<prefix>parsed/`, partitioned by the report's start date (UTC) so Athena, Trino or DuckDB can read it as a table. A report always maps to the same keys, so writing it again overwrites; a report the bucket refuses is not stored and its message is read again on the next fetch. Any S3-compatible store works: AWS S3, MinIO, SeaweedFS, Cloudflare R2. The bucket must exist; it is checked on start.
 

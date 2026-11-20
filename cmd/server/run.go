@@ -163,22 +163,27 @@ func run(ctx context.Context, version, commit, date string) error {
 	}
 	pipeline := ingest.New(store, m, log, pipelineOpts...)
 	fetchTimeout := time.Duration(cfg.FetchTimeoutSeconds) * time.Second
+	retention := time.Duration(cfg.RetentionDays) * 24 * time.Hour
+	cycle := func() error {
+		err := fetchReports(ctx, source, pipeline, m, fetchTimeout)
+		prune(ctx, store, retention)
+		server.RefreshMetrics(ctx)
+		return err
+	}
 
 	if fetchOnce {
-		if err := fetchReports(ctx, source, pipeline, m, fetchTimeout); err != nil {
+		if err := cycle(); err != nil {
 			return fmt.Errorf("failed to fetch reports: %w", err)
 		}
-		server.RefreshMetrics(ctx)
 		log.Info().Msg("fetch complete")
 		return nil
 	}
 
 	log.Info().Int("interval_seconds", fetchInterval).Msg("starting continuous fetch mode")
 
-	if err := fetchReports(ctx, source, pipeline, m, fetchTimeout); err != nil {
+	if err := cycle(); err != nil {
 		log.Error().Err(err).Msg("initial fetch failed")
 	}
-	server.RefreshMetrics(ctx)
 
 	ticker := time.NewTicker(time.Duration(fetchInterval) * time.Second)
 	defer ticker.Stop()
@@ -186,10 +191,9 @@ func run(ctx context.Context, version, commit, date string) error {
 	for {
 		select {
 		case <-ticker.C:
-			if err := fetchReports(ctx, source, pipeline, m, fetchTimeout); err != nil {
+			if err := cycle(); err != nil {
 				log.Error().Err(err).Msg("fetch failed")
 			}
-			server.RefreshMetrics(ctx)
 		case <-ctx.Done():
 			log.Info().Msg("shutting down")
 			return nil
@@ -200,6 +204,25 @@ func run(ctx context.Context, version, commit, date string) error {
 			}
 			return nil
 		}
+	}
+}
+
+// prune deletes the reports older than retention, when one is set.
+func prune(ctx context.Context, store *storage.Storage, retention time.Duration) {
+	if retention <= 0 || ctx.Err() != nil {
+		return
+	}
+	p, err := store.PruneBefore(ctx, time.Now().Add(-retention))
+	if err != nil {
+		log.Error().Err(err).Msg("pruning old reports")
+		return
+	}
+	if p.DMARCReports+p.TLSRPTReports > 0 {
+		log.Info().
+			Int64("dmarc_reports", p.DMARCReports).
+			Int64("tlsrpt_reports", p.TLSRPTReports).
+			Int64("sources", p.Sources).
+			Msg("pruned reports past retention")
 	}
 }
 
