@@ -14,6 +14,7 @@ import (
 	"github.com/dmarcguardhq/parse-dmarc/internal/imap"
 	"github.com/dmarcguardhq/parse-dmarc/internal/ingest"
 	"github.com/dmarcguardhq/parse-dmarc/internal/intake"
+	"github.com/dmarcguardhq/parse-dmarc/internal/jmapintake"
 	"github.com/dmarcguardhq/parse-dmarc/internal/logger"
 	"github.com/dmarcguardhq/parse-dmarc/internal/maildir"
 	"github.com/dmarcguardhq/parse-dmarc/internal/metrics"
@@ -145,11 +146,14 @@ func run(ctx context.Context, version, commit, date string) error {
 }
 
 // newSource builds the mail source the configuration names: a Maildir when
-// MAILDIR_PATH is set, IMAP otherwise. The ledger keeps the progress of a
-// read-only mailbox.
+// MAILDIR_PATH is set, JMAP when JMAP_SESSION_URL is, IMAP otherwise. The
+// ledger keeps the progress of a read-only mailbox.
 func newSource(cfg *config.Config, ledger intake.Ledger, m *metrics.Metrics) (intake.Source, error) {
 	if cfg.Maildir.Path != "" {
 		return maildir.NewClient(&cfg.Maildir, log)
+	}
+	if cfg.JMAP.SessionURL != "" {
+		return jmapintake.New(&cfg.JMAP, ledger, log)
 	}
 	return imap.NewClient(&cfg.IMAP, log, imap.WithConnectionRecorder(m), imap.WithLedger(ledger))
 }

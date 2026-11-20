@@ -126,28 +126,32 @@ One click on a platform, or a template for the self-hosted PaaS you already run.
 
 Every setting in this table is an environment variable or a key in `config.json`. Environment is read first and the file overrides it. The command-line flags further down take an environment variable but no `config.json` key.
 
-| Setting                        | Environment variable                 | Default                                                      |
-| ------------------------------ | ------------------------------------ | ------------------------------------------------------------ |
-| IMAP host and port             | `IMAP_HOST`, `IMAP_PORT`             | required, `993`                                              |
-| IMAP username and password     | `IMAP_USERNAME`, `IMAP_PASSWORD`     | required                                                     |
-| Mailbox to read                | `IMAP_MAILBOX`                       | `INBOX`                                                      |
-| Implicit TLS                   | `IMAP_USE_TLS`                       | `true`                                                       |
-| STARTTLS on a plaintext port   | `IMAP_STARTTLS`                      | `false`                                                      |
-| Internal CA bundle, PEM        | `IMAP_TLS_CA_FILE`                   | unset                                                        |
-| Skip certificate verification  | `IMAP_TLS_SKIP_VERIFY`               | `false`                                                      |
-| Mark fetched mail as seen      | `IMAP_MARK_AS_SEEN`                  | `true`                                                       |
-| Move processed mail to         | `IMAP_PROCESSED_MAILBOX`             | unset                                                        |
-| Never flag or move mail        | `IMAP_READ_ONLY`                     | `false`                                                      |
-| Maildir intake instead of IMAP | `MAILDIR_PATH`                       | unset                                                        |
-| Maildir deadletter mailbox     | `IMAP_DEADLETTER_BOX`                | `DEADLETTER`                                                 |
-| Database file                  | `DATABASE_PATH`                      | `~/.parse-dmarc/db.sqlite`, `/data/parse-dmarc.db` in Docker |
-| PostgreSQL instead of SQLite   | `DATABASE_URL`                       | unset                                                        |
-| PostgreSQL pool size           | `DATABASE_MAX_OPEN_CONNS`            | `4`                                                          |
-| PostgreSQL connection lifetime | `DATABASE_CONN_MAX_LIFETIME_SECONDS` | `1800`                                                       |
-| PostgreSQL idle connection     | `DATABASE_CONN_MAX_IDLE_SECONDS`     | `300`                                                        |
-| HTTP listen                    | `SERVER_HOST`, `SERVER_PORT`         | `127.0.0.1`, `8080`, `0.0.0.0` in Docker                     |
-| Seconds between fetches        | `FETCH_INTERVAL`                     | `300`                                                        |
-| Log level                      | `LOG_LEVEL`                          | `info`                                                       |
+| Setting                            | Environment variable                 | Default                                                      |
+| ---------------------------------- | ------------------------------------ | ------------------------------------------------------------ |
+| IMAP host and port                 | `IMAP_HOST`, `IMAP_PORT`             | required, `993`                                              |
+| IMAP username and password         | `IMAP_USERNAME`, `IMAP_PASSWORD`     | required                                                     |
+| Mailbox to read                    | `IMAP_MAILBOX`                       | `INBOX`                                                      |
+| Implicit TLS                       | `IMAP_USE_TLS`                       | `true`                                                       |
+| STARTTLS on a plaintext port       | `IMAP_STARTTLS`                      | `false`                                                      |
+| Internal CA bundle, PEM            | `IMAP_TLS_CA_FILE`                   | unset                                                        |
+| Skip certificate verification      | `IMAP_TLS_SKIP_VERIFY`               | `false`                                                      |
+| Mark fetched mail as seen          | `IMAP_MARK_AS_SEEN`                  | `true`                                                       |
+| Move processed mail to             | `IMAP_PROCESSED_MAILBOX`             | unset                                                        |
+| Never flag or move mail            | `IMAP_READ_ONLY`                     | `false`                                                      |
+| JMAP intake instead of IMAP        | `JMAP_SESSION_URL`, `JMAP_TOKEN`     | unset                                                        |
+| JMAP folder to read                | `JMAP_MAILBOX`                       | `INBOX`                                                      |
+| Refuse a JMAP token that can write | `JMAP_REQUIRE_READ_ONLY`             | `true`                                                       |
+| JMAP request timeout, seconds      | `JMAP_TIMEOUT_SECONDS`               | `60`                                                         |
+| Maildir intake instead of IMAP     | `MAILDIR_PATH`                       | unset                                                        |
+| Maildir deadletter mailbox         | `IMAP_DEADLETTER_BOX`                | `DEADLETTER`                                                 |
+| Database file                      | `DATABASE_PATH`                      | `~/.parse-dmarc/db.sqlite`, `/data/parse-dmarc.db` in Docker |
+| PostgreSQL instead of SQLite       | `DATABASE_URL`                       | unset                                                        |
+| PostgreSQL pool size               | `DATABASE_MAX_OPEN_CONNS`            | `4`                                                          |
+| PostgreSQL connection lifetime     | `DATABASE_CONN_MAX_LIFETIME_SECONDS` | `1800`                                                       |
+| PostgreSQL idle connection         | `DATABASE_CONN_MAX_IDLE_SECONDS`     | `300`                                                        |
+| HTTP listen                        | `SERVER_HOST`, `SERVER_PORT`         | `127.0.0.1`, `8080`, `0.0.0.0` in Docker                     |
+| Seconds between fetches            | `FETCH_INTERVAL`                     | `300`                                                        |
+| Log level                          | `LOG_LEVEL`                          | `info`                                                       |
 
 The dashboard listens on loopback unless `SERVER_HOST` says otherwise. Set `SERVER_HOST=0.0.0.0` to reach it from another host; the container images already do, since Docker forwards the port to the container's interface rather than its loopback. A `server.host` in the config file overrides `SERVER_HOST`, which is why the sample config leaves the key out.
 
@@ -162,6 +166,8 @@ An IMAP server whose certificate comes from your own CA fails with `x509: certif
 On a host that already receives the reports, point `MAILDIR_PATH` at the Maildir (for example `/var/mail/dmarc/Maildir`) and no IMAP settings are needed: every fetch reads `<MAILDIR_PATH>/new` and moves each message to `<MAILDIR_PATH>/cur` once it has been parsed. The messages are read as whole emails, exactly as Postfix or Courier deliver them. A message no report can be read from, or whose report does not parse, is moved to `<MAILDIR_PATH>/DEADLETTER` (`IMAP_DEADLETTER_BOX`) instead, so an operator sees what the parser dropped.
 
 Over IMAP, each fetch reads the unseen messages of `IMAP_MAILBOX` by UID and without marking them seen. Once a message's reports are stored, or once it is clear none of its attachments is a report, it is marked seen (`IMAP_MARK_AS_SEEN`) and moved to `IMAP_PROCESSED_MAILBOX` when that is set. A message whose report could not be stored, because the database was unreachable for example, is left unseen where it was and read again on the next fetch; the same holds for a message in a Maildir's `new/`. A report stored before is recognised and skipped, so reading a message twice never stores it twice. Messages over 32 MiB are not read.
+
+JMAP (RFC 8620, RFC 8621) replaces IMAP for providers that offer it with scoped API tokens. For Fastmail, create an API token under Settings, Privacy & Security, API tokens with read-only access to email, then set `JMAP_SESSION_URL=https://api.fastmail.com/jmap/session`, `JMAP_TOKEN` and `JMAP_MAILBOX` to the folder the reports are filed into, as a path from the top level (`Reports/DMARC`), `INBOX`, or `id:<mailbox id>`. The intake only ever calls `Mailbox/get`, `Email/query` and `Email/get` and downloads each message; it never changes the mailbox, and keeps its progress in the database (`processed_messages`) by mailbox ID, so renaming the folder loses nothing. With `JMAP_REQUIRE_READ_ONLY=true`, the default, a cycle refuses to read anything unless the server reports the account read-only for the token. A read-only token still reads every folder of the account: give it to Parse DMARC alone, or deliver the reports to an account that holds nothing else. `JMAP_SESSION_URL` cannot be combined with `IMAP_HOST` or `MAILDIR_PATH`.
 
 `IMAP_READ_ONLY=true` is for a mailbox a person reads as well, or an account whose credential should not be able to change it: the mailbox is opened with `EXAMINE`, every message is read whether or not it is seen, and nothing is flagged or moved. The messages already done with are recorded in the database (`processed_messages`, by mailbox, UIDVALIDITY and UID) instead, so each is read once. It cannot be combined with `IMAP_PROCESSED_MAILBOX`. A new UIDVALIDITY makes the server's messages new again; their reports are then recognised as stored.
 

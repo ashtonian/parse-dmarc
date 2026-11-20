@@ -17,6 +17,11 @@ var (
 	ErrMissingIMAPUsername = errors.New("IMAP_USERNAME is required: set via environment variable or config file")
 	// ErrMissingIMAPPassword is returned when IMAP password is not configured
 	ErrMissingIMAPPassword = errors.New("IMAP_PASSWORD is required: set via environment variable or config file")
+	// ErrMissingJMAPToken is returned when a JMAP session URL has no token.
+	ErrMissingJMAPToken = errors.New("JMAP_TOKEN is required with JMAP_SESSION_URL")
+	// ErrMultipleIntakes is returned when JMAP is configured next to IMAP
+	// or a Maildir: which mailbox to read would be a guess.
+	ErrMultipleIntakes = errors.New("JMAP_SESSION_URL excludes IMAP_HOST and MAILDIR_PATH: configure one intake")
 	// ErrReadOnlyProcessedMailbox is returned when a read-only mailbox is
 	// also asked to move processed mail.
 	ErrReadOnlyProcessedMailbox = errors.New("IMAP_READ_ONLY and IMAP_PROCESSED_MAILBOX exclude each other: a read-only intake moves no mail")
@@ -27,6 +32,7 @@ type Config struct {
 	LogLevel    string         `json:"log_level" env:"LOG_LEVEL" envDefault:"info"`
 	ColoredLogs bool           `json:"colored_logs" env:"COLORED_LOGS" envDefault:"false"`
 	IMAP        IMAPConfig     `json:"imap"`
+	JMAP        JMAPConfig     `json:"jmap"`
 	Maildir     MaildirConfig  `json:"maildir"`
 	Database    DatabaseConfig `json:"database"`
 	Server      ServerConfig   `json:"server"`
@@ -58,6 +64,22 @@ type IMAPConfig struct {
 	// message: progress is kept in the database instead, so the mailbox
 	// can be one a person reads too. MarkAsSeen does not apply.
 	ReadOnly bool `json:"read_only" env:"IMAP_READ_ONLY"`
+}
+
+// JMAPConfig holds JMAP intake configuration (RFC 8620, RFC 8621), for
+// providers such as Fastmail that issue read-only API tokens. Setting
+// SessionURL selects this intake.
+type JMAPConfig struct {
+	// SessionURL is the session resource, for Fastmail
+	// https://api.fastmail.com/jmap/session.
+	SessionURL string `json:"session_url" env:"JMAP_SESSION_URL"`
+	Token      string `json:"token" env:"JMAP_TOKEN"`
+	// Mailbox is a folder path such as Reports/DMARC, INBOX, or id:<mailbox id>.
+	Mailbox string `json:"mailbox" env:"JMAP_MAILBOX" envDefault:"INBOX"`
+	// RequireReadOnly refuses a token that can change the mailbox. The
+	// intake never writes; this makes the credential unable to as well.
+	RequireReadOnly bool `json:"require_read_only" env:"JMAP_REQUIRE_READ_ONLY" envDefault:"true"`
+	TimeoutSeconds  int  `json:"timeout_seconds" env:"JMAP_TIMEOUT_SECONDS" envDefault:"60"`
 }
 
 // MaildirConfig holds local Maildir intake configuration. When Path is set,
@@ -149,6 +171,9 @@ func Load(path string) (*Config, error) {
 	if cfg.IMAP.Mailbox == "" {
 		cfg.IMAP.Mailbox = "INBOX"
 	}
+	if cfg.JMAP.Mailbox == "" {
+		cfg.JMAP.Mailbox = "INBOX"
+	}
 	if cfg.Maildir.DeadletterMailbox == "" {
 		cfg.Maildir.DeadletterMailbox = "DEADLETTER"
 	}
@@ -180,6 +205,15 @@ func Load(path string) (*Config, error) {
 // replaces the mailbox and the fetch does not touch IMAP at all.
 // Returns nil if valid, or an error describing the missing configuration.
 func (c *Config) Validate() error {
+	if c.JMAP.SessionURL != "" {
+		if c.IMAP.Host != "" || c.Maildir.Path != "" {
+			return ErrMultipleIntakes
+		}
+		if c.JMAP.Token == "" {
+			return ErrMissingJMAPToken
+		}
+		return nil
+	}
 	if c.Maildir.Path != "" {
 		return nil
 	}

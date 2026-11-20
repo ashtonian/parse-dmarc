@@ -54,6 +54,7 @@ type Client struct {
 	allowHTTP        bool
 	maxResponseBytes int64
 	maxBlobBytes     int64
+	timeout          time.Duration
 }
 
 // Option configures a Client.
@@ -64,6 +65,12 @@ type Option func(*Client)
 // refuses to carry the token to another host.
 func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) { c.http = hc }
+}
+
+// WithTimeout bounds each request of the default HTTP client, which is 60
+// seconds otherwise. It has no effect together with WithHTTPClient.
+func WithTimeout(d time.Duration) Option {
+	return func(c *Client) { c.timeout = d }
 }
 
 // WithInsecureHTTP allows http:// session, API and download URLs, for tests
@@ -118,7 +125,7 @@ func NewClient(sessionURL, token string, opts ...Option) (*Client, error) {
 
 	base := c.http
 	if base == nil {
-		base = defaultHTTPClient()
+		base = defaultHTTPClient(c.timeout)
 	}
 	// A shallow copy shares the caller's transport and connection pool but
 	// lets the redirect policy be installed without mutating their client.
@@ -138,9 +145,15 @@ func NewClient(sessionURL, token string, opts ...Option) (*Client, error) {
 	return c, nil
 }
 
-func defaultHTTPClient() *http.Client {
+// defaultTimeout bounds one request of the default HTTP client.
+const defaultTimeout = 60 * time.Second
+
+func defaultHTTPClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
 	return &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout: timeout,
 		Transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
