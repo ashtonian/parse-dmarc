@@ -71,6 +71,10 @@ type Statistics struct {
 	UniqueSourceIPs int    `json:"unique_source_ips"`
 	UniqueDomains   int    `json:"unique_domains"`
 	HasData         bool   `json:"has_data"`
+	// UnalignedMessages failed DMARC though SPF or DKIM passed for another
+	// domain; UnauthenticatedMessages passed nothing at all.
+	UnalignedMessages       int `json:"unaligned_messages"`
+	UnauthenticatedMessages int `json:"unauthenticated_messages"`
 }
 
 // Delivered-compliance thresholds (percent) behind Health.
@@ -108,6 +112,10 @@ type TopSourceIP struct {
 	Count    int    `json:"count"`
 	Pass     int    `json:"pass"`
 	Fail     int    `json:"fail"`
+	// Fail split by class: SPF or DKIM passed for another domain, or
+	// nothing passed.
+	Unaligned       int `json:"unaligned"`
+	Unauthenticated int `json:"unauthenticated"`
 }
 
 // SaveReport stores an aggregate report and its records. It returns false,
@@ -126,30 +134,38 @@ func (s *Storage) SaveReport(ctx context.Context, feedback *parser.Feedback) (bo
 	defer func() { _ = tx.Rollback() }()
 
 	var reportID int64
+	pp := feedback.PolicyPublished
 	err = s.queryRow(ctx, tx, `
 		INSERT INTO reports (
 			report_id, org_name, email, domain,
 			date_begin, date_end, created_at,
 			policy_p, policy_sp, policy_pct,
 			total_messages, compliant_messages,
-			raw_report
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			raw_report,
+			schema_version, generator,
+			policy_np, policy_adkim, policy_aspf, policy_fo,
+			policy_testing, policy_discovery_method
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (org_name, report_id, domain) DO NOTHING
 		RETURNING id
 	`,
 		feedback.ReportMetadata.ReportID,
 		feedback.ReportMetadata.OrgName,
 		feedback.ReportMetadata.Email,
-		feedback.PolicyPublished.Domain,
+		pp.Domain,
 		feedback.ReportMetadata.DateRange.Begin,
 		feedback.ReportMetadata.DateRange.End,
 		time.Now().Unix(),
-		feedback.PolicyPublished.P,
-		feedback.PolicyPublished.SP,
-		feedback.PolicyPublished.PCT,
+		pp.P,
+		pp.SP,
+		pp.PCT,
 		feedback.GetTotalMessages(),
 		feedback.GetDMARCCompliantCount(),
 		rawReport,
+		feedback.SchemaVersion(),
+		feedback.ReportMetadata.Generator,
+		pp.NP, pp.ADKIM, pp.ASPF, pp.FO,
+		pp.Testing, pp.DiscoveryMethod,
 	).Scan(&reportID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -168,13 +184,22 @@ func (s *Storage) SaveReport(ctx context.Context, feedback *parser.Feedback) (bo
 			return false, fmt.Errorf("marshal SPF results: %w", err)
 		}
 
+		reasons, err := json.Marshal(record.Row.PolicyEvaluated.Reason)
+		if err != nil {
+			return false, fmt.Errorf("marshal override reasons: %w", err)
+		}
+		if len(record.Row.PolicyEvaluated.Reason) == 0 {
+			reasons = []byte("[]")
+		}
+
 		if _, err := s.exec(ctx, tx, `
 			INSERT INTO records (
 				report_id, source_ip, count,
 				disposition, dkim_result, spf_result,
-				header_from, envelope_from,
-				dkim_domains, spf_domains
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				header_from, envelope_from, envelope_to,
+				dkim_domains, spf_domains,
+				override_reasons, auth_class
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			reportID,
 			record.Row.SourceIP,
@@ -184,8 +209,11 @@ func (s *Storage) SaveReport(ctx context.Context, feedback *parser.Feedback) (bo
 			record.Row.PolicyEvaluated.SPF,
 			record.Identifiers.HeaderFrom,
 			record.Identifiers.EnvelopeFrom,
+			record.Identifiers.EnvelopeTo,
 			dkimDomains,
 			spfDomains,
+			reasons,
+			record.Class(),
 		); err != nil {
 			return false, fmt.Errorf("insert record: %w", err)
 		}
@@ -284,6 +312,16 @@ func (s *Storage) GetStatistics(ctx context.Context) (*Statistics, error) {
 		return nil, fmt.Errorf("query enforced messages: %w", err)
 	}
 
+	err = s.queryRow(ctx, s.db, `
+		SELECT
+			COALESCE(SUM(CASE WHEN auth_class = 'unaligned' THEN count ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN auth_class = 'unauthenticated' THEN count ELSE 0 END), 0)
+		FROM records
+	`).Scan(&stats.UnalignedMessages, &stats.UnauthenticatedMessages)
+	if err != nil {
+		return nil, fmt.Errorf("query record classes: %w", err)
+	}
+
 	err = s.queryRow(ctx, s.db, "SELECT COUNT(DISTINCT source_ip) FROM records").Scan(&stats.UniqueSourceIPs)
 	if err != nil {
 		return nil, fmt.Errorf("query unique source IPs: %w", err)
@@ -304,7 +342,9 @@ func (s *Storage) GetTopSourceIPs(ctx context.Context, limit int) ([]TopSourceIP
 			source_ip,
 			SUM(count) as total_count,
 			SUM(CASE WHEN (dkim_result = 'pass' OR spf_result = 'pass') THEN count ELSE 0 END) as pass_count,
-			SUM(CASE WHEN (dkim_result != 'pass' AND spf_result != 'pass') THEN count ELSE 0 END) as fail_count
+			SUM(CASE WHEN (dkim_result != 'pass' AND spf_result != 'pass') THEN count ELSE 0 END) as fail_count,
+			SUM(CASE WHEN auth_class = 'unaligned' THEN count ELSE 0 END) as unaligned_count,
+			SUM(CASE WHEN auth_class = 'unauthenticated' THEN count ELSE 0 END) as unauthenticated_count
 		FROM records
 		GROUP BY source_ip
 		ORDER BY total_count DESC
@@ -319,7 +359,7 @@ func (s *Storage) GetTopSourceIPs(ctx context.Context, limit int) ([]TopSourceIP
 	var results []TopSourceIP
 	for rows.Next() {
 		var r TopSourceIP
-		if err := rows.Scan(&r.SourceIP, &r.Count, &r.Pass, &r.Fail); err != nil {
+		if err := rows.Scan(&r.SourceIP, &r.Count, &r.Pass, &r.Fail, &r.Unaligned, &r.Unauthenticated); err != nil {
 			return nil, fmt.Errorf("scan source IP row: %w", err)
 		}
 		results = append(results, r)
@@ -330,10 +370,18 @@ func (s *Storage) GetTopSourceIPs(ctx context.Context, limit int) ([]TopSourceIP
 
 // DomainStats holds statistics for a single domain
 type DomainStats struct {
-	Domain            string  `json:"domain"`
-	TotalMessages     int     `json:"total_messages"`
-	CompliantMessages int     `json:"compliant_messages"`
-	ComplianceRate    float64 `json:"compliance_rate"`
+	Domain                  string  `json:"domain"`
+	TotalMessages           int     `json:"total_messages"`
+	CompliantMessages       int     `json:"compliant_messages"`
+	ComplianceRate          float64 `json:"compliance_rate"`
+	UnalignedMessages       int     `json:"unaligned_messages"`
+	UnauthenticatedMessages int     `json:"unauthenticated_messages"`
+	// LastReport is the end of the newest report for the domain;
+	// LastUnaligned and LastUnauthenticated the end of the newest report
+	// with such a record, 0 for none. Unix seconds.
+	LastReport          int64 `json:"last_report"`
+	LastUnaligned       int64 `json:"last_unaligned"`
+	LastUnauthenticated int64 `json:"last_unauthenticated"`
 }
 
 // OrgStats holds statistics for a reporting organization
@@ -357,11 +405,24 @@ type AuthResultStats struct {
 // GetDomainStats returns statistics grouped by domain
 func (s *Storage) GetDomainStats(ctx context.Context) ([]DomainStats, error) {
 	rows, err := s.query(ctx, s.db, `
-		SELECT domain,
-		       COALESCE(SUM(total_messages), 0) as total_messages,
-		       COALESCE(SUM(compliant_messages), 0) as compliant_messages
-		FROM reports
-		GROUP BY domain
+		SELECT r.domain,
+		       COALESCE(SUM(r.total_messages), 0),
+		       COALESCE(SUM(r.compliant_messages), 0),
+		       COALESCE(MAX(r.date_end), 0),
+		       COALESCE(SUM(c.unaligned), 0),
+		       COALESCE(SUM(c.unauthenticated), 0),
+		       COALESCE(MAX(CASE WHEN c.unaligned > 0 THEN r.date_end END), 0),
+		       COALESCE(MAX(CASE WHEN c.unauthenticated > 0 THEN r.date_end END), 0)
+		FROM reports r
+		LEFT JOIN (
+			SELECT report_id,
+			       SUM(CASE WHEN auth_class = 'unaligned' THEN count ELSE 0 END) AS unaligned,
+			       SUM(CASE WHEN auth_class = 'unauthenticated' THEN count ELSE 0 END) AS unauthenticated
+			FROM records
+			GROUP BY report_id
+		) c ON c.report_id = r.id
+		GROUP BY r.domain
+		ORDER BY r.domain
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("query domain stats: %w", err)
@@ -371,7 +432,8 @@ func (s *Storage) GetDomainStats(ctx context.Context) ([]DomainStats, error) {
 	var stats []DomainStats
 	for rows.Next() {
 		var ds DomainStats
-		if err := rows.Scan(&ds.Domain, &ds.TotalMessages, &ds.CompliantMessages); err != nil {
+		if err := rows.Scan(&ds.Domain, &ds.TotalMessages, &ds.CompliantMessages, &ds.LastReport,
+			&ds.UnalignedMessages, &ds.UnauthenticatedMessages, &ds.LastUnaligned, &ds.LastUnauthenticated); err != nil {
 			return nil, fmt.Errorf("scan domain stats row: %w", err)
 		}
 		if ds.TotalMessages > 0 {
@@ -379,7 +441,7 @@ func (s *Storage) GetDomainStats(ctx context.Context) ([]DomainStats, error) {
 		}
 		stats = append(stats, ds)
 	}
-	return stats, nil
+	return stats, rows.Err()
 }
 
 // GetOrgStats returns statistics grouped by reporting organization

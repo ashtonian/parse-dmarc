@@ -360,6 +360,39 @@ func decompressZip(zipReader *zip.Reader) ([]byte, error) {
 	return nil, fmt.Errorf("no XML or JSON file in zip archive")
 }
 
+// Record classes: what a record's authentication results say about the
+// mail it counts.
+const (
+	// ClassPass: DMARC passed, SPF or DKIM aligned with the From domain.
+	ClassPass = "pass"
+	// ClassUnaligned: SPF or DKIM passed, but for a domain that does not
+	// align with the From domain. A legitimate service sending without
+	// alignment, or a forwarder or mailing list re-signing the mail: the
+	// records to fix before a stricter policy.
+	ClassUnaligned = "unaligned"
+	// ClassUnauthenticated: nothing passed. Spoofing, or forwarding that
+	// broke both SPF and DKIM.
+	ClassUnauthenticated = "unauthenticated"
+)
+
+// Class returns the record's class.
+func (r Record) Class() string {
+	if r.Row.PolicyEvaluated.DKIM == "pass" || r.Row.PolicyEvaluated.SPF == "pass" {
+		return ClassPass
+	}
+	for _, d := range r.AuthResults.DKIM {
+		if d.Result == "pass" {
+			return ClassUnaligned
+		}
+	}
+	for _, s := range r.AuthResults.SPF {
+		if s.Result == "pass" {
+			return ClassUnaligned
+		}
+	}
+	return ClassUnauthenticated
+}
+
 // GetDateRange returns the date range as time.Time objects
 func (f *Feedback) GetDateRange() (time.Time, time.Time) {
 	begin := time.Unix(f.ReportMetadata.DateRange.Begin, 0)
