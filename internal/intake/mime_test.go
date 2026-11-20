@@ -156,4 +156,3 @@ func encodeB64(b []byte) string {
 	}
 	return strings.Join(append(out, e), "\r\n")
 }
-

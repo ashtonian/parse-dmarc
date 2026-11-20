@@ -73,3 +73,11 @@ type Source interface {
 // MaxMessageSize bounds one report mail. Aggregate reports are kilobytes;
 // anything this large is not one, and reading it would only cost memory.
 const MaxMessageSize = 32 << 20
+
+// Ledger records which messages a source has finished with, for sources
+// that may not flag or move mail to mark their progress. *storage.Storage
+// is one.
+type Ledger interface {
+	ProcessedKeys(ctx context.Context, source string, keys []string) (map[string]bool, error)
+	MarkProcessed(ctx context.Context, source, key, outcome, messageID string) error
+}

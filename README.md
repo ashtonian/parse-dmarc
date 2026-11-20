@@ -137,6 +137,7 @@ Every setting in this table is an environment variable or a key in `config.json`
 | Skip certificate verification  | `IMAP_TLS_SKIP_VERIFY`               | `false`                                                      |
 | Mark fetched mail as seen      | `IMAP_MARK_AS_SEEN`                  | `true`                                                       |
 | Move processed mail to         | `IMAP_PROCESSED_MAILBOX`             | unset                                                        |
+| Never flag or move mail        | `IMAP_READ_ONLY`                     | `false`                                                      |
 | Maildir intake instead of IMAP | `MAILDIR_PATH`                       | unset                                                        |
 | Maildir deadletter mailbox     | `IMAP_DEADLETTER_BOX`                | `DEADLETTER`                                                 |
 | Database file                  | `DATABASE_PATH`                      | `~/.parse-dmarc/db.sqlite`, `/data/parse-dmarc.db` in Docker |
@@ -161,6 +162,8 @@ An IMAP server whose certificate comes from your own CA fails with `x509: certif
 On a host that already receives the reports, point `MAILDIR_PATH` at the Maildir (for example `/var/mail/dmarc/Maildir`) and no IMAP settings are needed: every fetch reads `<MAILDIR_PATH>/new` and moves each message to `<MAILDIR_PATH>/cur` once it has been parsed. The messages are read as whole emails, exactly as Postfix or Courier deliver them. A message no report can be read from, or whose report does not parse, is moved to `<MAILDIR_PATH>/DEADLETTER` (`IMAP_DEADLETTER_BOX`) instead, so an operator sees what the parser dropped.
 
 Over IMAP, each fetch reads the unseen messages of `IMAP_MAILBOX` by UID and without marking them seen. Once a message's reports are stored, or once it is clear none of its attachments is a report, it is marked seen (`IMAP_MARK_AS_SEEN`) and moved to `IMAP_PROCESSED_MAILBOX` when that is set. A message whose report could not be stored, because the database was unreachable for example, is left unseen where it was and read again on the next fetch; the same holds for a message in a Maildir's `new/`. A report stored before is recognised and skipped, so reading a message twice never stores it twice. Messages over 32 MiB are not read.
+
+`IMAP_READ_ONLY=true` is for a mailbox a person reads as well, or an account whose credential should not be able to change it: the mailbox is opened with `EXAMINE`, every message is read whether or not it is seen, and nothing is flagged or moved. The messages already done with are recorded in the database (`processed_messages`, by mailbox, UIDVALIDITY and UID) instead, so each is read once. It cannot be combined with `IMAP_PROCESSED_MAILBOX`. A new UIDVALIDITY makes the server's messages new again; their reports are then recognised as stored.
 
 | Flag                        | What it does                                                                                  |
 | --------------------------- | --------------------------------------------------------------------------------------------- |

@@ -70,7 +70,7 @@ func TestFetchMaildirReportsDeadlettersUnreadableMessage(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	cfg := &config.Config{Maildir: config.MaildirConfig{Path: dir, DeadletterMailbox: "DEADLETTER"}}
-	source, err := newSource(cfg, nil)
+	source, err := newSource(cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestFetchRetriesWhenTheStoreFails(t *testing.T) {
 	})
 	path := filepath.Join(t.TempDir(), "db.sqlite")
 	cfg := &config.Config{Maildir: config.MaildirConfig{Path: dir, DeadletterMailbox: "DEADLETTER"}}
-	source, err := newSource(cfg, nil)
+	source, err := newSource(cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

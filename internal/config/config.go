@@ -17,6 +17,9 @@ var (
 	ErrMissingIMAPUsername = errors.New("IMAP_USERNAME is required: set via environment variable or config file")
 	// ErrMissingIMAPPassword is returned when IMAP password is not configured
 	ErrMissingIMAPPassword = errors.New("IMAP_PASSWORD is required: set via environment variable or config file")
+	// ErrReadOnlyProcessedMailbox is returned when a read-only mailbox is
+	// also asked to move processed mail.
+	ErrReadOnlyProcessedMailbox = errors.New("IMAP_READ_ONLY and IMAP_PROCESSED_MAILBOX exclude each other: a read-only intake moves no mail")
 )
 
 // Config holds the application configuration
@@ -50,6 +53,11 @@ type IMAPConfig struct {
 
 	MarkAsSeen       bool   `json:"mark_as_seen" env:"IMAP_MARK_AS_SEEN" envDefault:"true"`
 	ProcessedMailbox string `json:"processed_mailbox" env:"IMAP_PROCESSED_MAILBOX"`
+
+	// ReadOnly opens the mailbox with EXAMINE and never flags or moves a
+	// message: progress is kept in the database instead, so the mailbox
+	// can be one a person reads too. MarkAsSeen does not apply.
+	ReadOnly bool `json:"read_only" env:"IMAP_READ_ONLY"`
 }
 
 // MaildirConfig holds local Maildir intake configuration. When Path is set,
@@ -183,6 +191,9 @@ func (c *Config) Validate() error {
 	}
 	if c.IMAP.Password == "" {
 		return ErrMissingIMAPPassword
+	}
+	if c.IMAP.ReadOnly && c.IMAP.ProcessedMailbox != "" {
+		return ErrReadOnlyProcessedMailbox
 	}
 	return nil
 }

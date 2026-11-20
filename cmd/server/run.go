@@ -101,7 +101,7 @@ func run(ctx context.Context, version, commit, date string) error {
 		return nil
 	}
 
-	source, err := newSource(cfg, m)
+	source, err := newSource(cfg, store, m)
 	if err != nil {
 		return fmt.Errorf("configure mail source: %w", err)
 	}
@@ -145,12 +145,13 @@ func run(ctx context.Context, version, commit, date string) error {
 }
 
 // newSource builds the mail source the configuration names: a Maildir when
-// MAILDIR_PATH is set, IMAP otherwise.
-func newSource(cfg *config.Config, m *metrics.Metrics) (intake.Source, error) {
+// MAILDIR_PATH is set, IMAP otherwise. The ledger keeps the progress of a
+// read-only mailbox.
+func newSource(cfg *config.Config, ledger intake.Ledger, m *metrics.Metrics) (intake.Source, error) {
 	if cfg.Maildir.Path != "" {
 		return maildir.NewClient(&cfg.Maildir, log)
 	}
-	return imap.NewClient(&cfg.IMAP, log, m), nil
+	return imap.NewClient(&cfg.IMAP, log, imap.WithConnectionRecorder(m), imap.WithLedger(ledger))
 }
 
 // fetchReports runs one fetch cycle: the source hands each new message to

@@ -31,11 +31,42 @@ type Client struct {
 	client   *client.Client
 	log      *zerolog.Logger
 	recorder ConnectionRecorder
+	ledger   intake.Ledger
 }
 
-// NewClient creates a new IMAP client. recorder may be nil.
-func NewClient(cfg *config.IMAPConfig, log *zerolog.Logger, recorder ConnectionRecorder) *Client {
-	return &Client{config: cfg, log: log, recorder: recorder}
+// Option configures a Client.
+type Option func(*Client)
+
+// WithConnectionRecorder observes every connection attempt.
+func WithConnectionRecorder(r ConnectionRecorder) Option {
+	return func(c *Client) { c.recorder = r }
+}
+
+// WithLedger keeps the progress of a read-only mailbox; IMAP_READ_ONLY
+// requires it.
+func WithLedger(l intake.Ledger) Option {
+	return func(c *Client) { c.ledger = l }
+}
+
+// ErrReadOnlyNeedsLedger is returned for a read-only client without a ledger.
+var ErrReadOnlyNeedsLedger = errors.New("a read-only IMAP intake needs a ledger to keep its progress")
+
+// NewClient creates a new IMAP client.
+func NewClient(cfg *config.IMAPConfig, log *zerolog.Logger, opts ...Option) (*Client, error) {
+	c := &Client{config: cfg, log: log}
+	for _, opt := range opts {
+		opt(c)
+	}
+	if cfg.ReadOnly && c.ledger == nil {
+		return nil, ErrReadOnlyNeedsLedger
+	}
+	return c, nil
+}
+
+// ledgerSource names the mailbox in the ledger: the account and the
+// mailbox, never the password.
+func (c *Client) ledgerSource() string {
+	return fmt.Sprintf("imap://%s@%s:%d/%s", c.config.Username, c.config.Host, c.config.Port, c.config.Mailbox)
 }
 
 // Name names the source in logs and metrics.
@@ -139,11 +170,16 @@ func (c *Client) disconnect() {
 // many bodies are held in memory at once.
 const batchSize = 50
 
-// Cycle reads the unseen messages of the mailbox, hands each to handle and
-// settles it by its outcome: stored and invalid messages are marked seen
-// and moved to the processed mailbox as configured; a message to retry is
-// left exactly as it was. Bodies are fetched with BODY.PEEK, so reading a
-// message never marks it seen by itself.
+// Cycle reads the new messages of the mailbox, hands each to handle and
+// settles it by its outcome.
+//
+// By default the new messages are the unseen ones: stored and invalid
+// messages are marked seen and moved to the processed mailbox as
+// configured. A read-only client opens the mailbox with EXAMINE, takes every
+// message the ledger has not recorded, and records stored and invalid ones
+// there instead. Either way a message to retry is left exactly as it was,
+// and bodies are fetched with BODY.PEEK, so reading a message never marks
+// it seen by itself.
 func (c *Client) Cycle(ctx context.Context, handle intake.Handler) error {
 	if err := c.connect(); err != nil {
 		return err
@@ -155,23 +191,20 @@ func (c *Client) Cycle(ctx context.Context, handle intake.Handler) error {
 	stop := context.AfterFunc(ctx, func() { _ = c.client.Terminate() })
 	defer stop()
 
-	mbox, err := c.client.Select(c.config.Mailbox, false)
+	mbox, err := c.client.Select(c.config.Mailbox, c.config.ReadOnly)
 	if err != nil {
 		return fmt.Errorf("select mailbox %s: %w", c.config.Mailbox, err)
 	}
 
-	criteria := imap.NewSearchCriteria()
-	criteria.WithoutFlags = []string{imap.SeenFlag}
-	uids, err := c.client.UidSearch(criteria)
+	uids, err := c.newUIDs(ctx, mbox.UidValidity)
 	if err != nil {
-		return fmt.Errorf("search mailbox %s: %w", c.config.Mailbox, err)
+		return err
 	}
 	if len(uids) == 0 {
 		c.log.Info().Str("mailbox", c.config.Mailbox).Msg("no new messages found")
 		return nil
 	}
-	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
-	c.log.Info().Int("count", len(uids)).Str("mailbox", c.config.Mailbox).Msg("found new messages")
+	c.log.Info().Int("count", len(uids)).Str("mailbox", c.config.Mailbox).Bool("read_only", c.config.ReadOnly).Msg("found new messages")
 
 	var errs []error
 	for start := 0; start < len(uids); start += batchSize {
@@ -184,7 +217,7 @@ func (c *Client) Cycle(ctx context.Context, handle intake.Handler) error {
 			errs = append(errs, err)
 			break
 		}
-		if err := c.settle(done); err != nil {
+		if err := c.settle(ctx, done); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -194,15 +227,63 @@ func (c *Client) Cycle(ctx context.Context, handle intake.Handler) error {
 	return errors.Join(errs...)
 }
 
+// newUIDs returns the UIDs to read this cycle, in ascending order.
+func (c *Client) newUIDs(ctx context.Context, uidValidity uint32) ([]uint32, error) {
+	criteria := imap.NewSearchCriteria()
+	if !c.config.ReadOnly {
+		criteria.WithoutFlags = []string{imap.SeenFlag}
+	}
+	uids, err := c.client.UidSearch(criteria)
+	if err != nil {
+		return nil, fmt.Errorf("search mailbox %s: %w", c.config.Mailbox, err)
+	}
+	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
+	if !c.config.ReadOnly {
+		return uids, nil
+	}
+
+	keys := make([]string, len(uids))
+	for i, uid := range uids {
+		keys[i] = messageKey(uidValidity, uid)
+	}
+	done, err := c.ledger.ProcessedKeys(ctx, c.ledgerSource(), keys)
+	if err != nil {
+		return nil, err
+	}
+	fresh := uids[:0]
+	for i, uid := range uids {
+		if !done[keys[i]] {
+			fresh = append(fresh, uid)
+		}
+	}
+	return fresh, nil
+}
+
+// messageKey identifies a message for as long as the mailbox keeps its
+// UIDVALIDITY; a new UIDVALIDITY makes every message new again, and the
+// store recognises the reports it already has.
+func messageKey(uidValidity, uid uint32) string {
+	return fmt.Sprintf("%d:%d", uidValidity, uid)
+}
+
+// settled is a message the cycle is done with.
+type settled struct {
+	uid       uint32
+	key       string
+	messageID string
+	outcome   intake.Outcome
+}
+
 // processBatch fetches a batch of messages and hands each to handle. It
-// returns the UIDs that are done with: stored or invalid.
-func (c *Client) processBatch(ctx context.Context, uidValidity uint32, uids []uint32, handle intake.Handler) ([]uint32, error) {
+// returns the messages that are done with: stored or invalid.
+func (c *Client) processBatch(ctx context.Context, uidValidity uint32, uids []uint32, handle intake.Handler) ([]settled, error) {
 	envelopes, err := c.fetchEnvelopes(uids)
 	if err != nil {
 		return nil, err
 	}
 
-	var done, wanted []uint32
+	var done []settled
+	var wanted []uint32
 	for _, uid := range uids {
 		env, ok := envelopes[uid]
 		if !ok {
@@ -215,7 +296,7 @@ func (c *Client) processBatch(ctx context.Context, uidValidity uint32, uids []ui
 				Str("message_id", env.messageID).
 				Uint32("size", env.size).
 				Msg("message is too large to be a report; it is marked processed without being read")
-			done = append(done, uid)
+			done = append(done, settled{uid: uid, key: messageKey(uidValidity, uid), messageID: env.messageID, outcome: intake.OutcomeInvalid})
 			continue
 		}
 		wanted = append(wanted, uid)
@@ -234,7 +315,7 @@ func (c *Client) processBatch(ctx context.Context, uidValidity uint32, uids []ui
 			continue
 		}
 		msg := intake.Message{
-			Key:         fmt.Sprintf("%d:%d", uidValidity, uid),
+			Key:         messageKey(uidValidity, uid),
 			MessageID:   env.messageID,
 			From:        env.from,
 			Subject:     env.subject,
@@ -259,7 +340,7 @@ func (c *Client) processBatch(ctx context.Context, uidValidity uint32, uids []ui
 		}
 
 		if outcome != intake.OutcomeRetry {
-			done = append(done, uid)
+			done = append(done, settled{uid: uid, key: msg.Key, messageID: msg.MessageID, outcome: outcome})
 		}
 	}
 	return done, nil
@@ -331,22 +412,34 @@ func (c *Client) uidFetch(uids []uint32, items []imap.FetchItem, fn func(*imap.M
 	return <-done
 }
 
-// settle marks the given messages seen and moves them to the processed
+// settle records the messages a read-only client is done with in the
+// ledger; otherwise it marks them seen and moves them to the processed
 // mailbox, as configured, addressing them by UID so a concurrent expunge by
 // another client cannot shift the command onto other messages.
-func (c *Client) settle(uids []uint32) error {
-	if len(uids) == 0 {
+func (c *Client) settle(ctx context.Context, done []settled) error {
+	if len(done) == 0 {
 		return nil
 	}
+	if c.config.ReadOnly {
+		for _, m := range done {
+			if err := c.ledger.MarkProcessed(ctx, c.ledgerSource(), m.key, m.outcome.String(), m.messageID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	seqSet := new(imap.SeqSet)
-	seqSet.AddNum(uids...)
+	for _, m := range done {
+		seqSet.AddNum(m.uid)
+	}
 
 	if c.config.MarkAsSeen {
 		item := imap.FormatFlagsOp(imap.AddFlags, true)
 		if err := c.client.UidStore(seqSet, item, []interface{}{imap.SeenFlag}, nil); err != nil {
-			return fmt.Errorf("mark %d messages seen: %w", len(uids), err)
+			return fmt.Errorf("mark %d messages seen: %w", len(done), err)
 		}
-		c.log.Info().Int("count", len(uids)).Msg("marked messages as seen")
+		c.log.Info().Int("count", len(done)).Msg("marked messages as seen")
 	}
 
 	if dest := c.config.ProcessedMailbox; dest != "" {
@@ -358,9 +451,9 @@ func (c *Client) settle(uids []uint32) error {
 		// MOVE (RFC 6851) where the server has it; otherwise go-imap falls
 		// back to UID COPY, UID STORE \Deleted and EXPUNGE.
 		if err := c.client.UidMove(seqSet, dest); err != nil {
-			return fmt.Errorf("move %d messages to %s: %w", len(uids), dest, err)
+			return fmt.Errorf("move %d messages to %s: %w", len(done), dest, err)
 		}
-		c.log.Info().Int("count", len(uids)).Str("mailbox", dest).Msg("moved messages to processed mailbox")
+		c.log.Info().Int("count", len(done)).Str("mailbox", dest).Msg("moved messages to processed mailbox")
 	}
 	return nil
 }
